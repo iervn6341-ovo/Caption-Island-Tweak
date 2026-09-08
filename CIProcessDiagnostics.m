@@ -1,0 +1,649 @@
+#import "CIProcessDiagnostics.h"
+#import "CIConstants.h"
+#import "CILogStore.h"
+#import <UIKit/UIKit.h>
+#import <dlfcn.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
+#import <substrate.h>
+#import <float.h>
+#import <mach-o/dyld.h>
+#import <stdlib.h>
+#import <string.h>
+#import <unistd.h>
+
+static const NSUInteger CIDiagnosticsMaximumDescriptionLength = 900;
+static const NSUInteger CIRetainedLaunchPrefetchAssertionLimit = 4;
+
+typedef void (*CIRBSAssertionInvalidateImplementation)(id, SEL);
+typedef void (*CIAppLaunchMeasurementReleaseImplementation)(void);
+
+static CIRBSAssertionInvalidateImplementation
+    CIOriginalRBSAssertionInvalidate;
+static CIAppLaunchMeasurementReleaseImplementation
+    CIOriginalAppLaunchMeasurementRelease;
+static NSMutableArray *CIRetainedLaunchPrefetchAssertions;
+static BOOL CILaunchPrefetchRetentionProbeInstalled;
+static BOOL CILaunchPrefetchRetentionProbeEnabled;
+static BOOL CIDirectLaunchPrefetchReleaseHookInstalled;
+static BOOL CIRBSAssertionRetentionFallbackInstalled;
+static BOOL CILaunchPrefetchReleaseWasSuppressed;
+static BOOL CILaunchPrefetchRetentionProbeReleasing;
+static NSUInteger CILaunchPrefetchSuppressedReleaseCount;
+
+static void CILoadRunningBoardServices(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        if (!NSClassFromString(@"RBSProcessHandle") ||
+            !NSClassFromString(@"RBSAssertion")) {
+            dlopen(
+                "/System/Library/PrivateFrameworks/RunningBoardServices.framework"
+                "/RunningBoardServices",
+                RTLD_LAZY
+            );
+        }
+    });
+}
+
+static id CICurrentRunningBoardProcessState(void) {
+    CILoadRunningBoardServices();
+
+    Class handleClass = NSClassFromString(@"RBSProcessHandle");
+    SEL currentProcessSelector = NSSelectorFromString(@"currentProcess");
+    if (![handleClass respondsToSelector:currentProcessSelector]) return nil;
+
+    id handle = nil;
+    @try {
+        handle = ((id (*)(id, SEL))objc_msgSend)(
+            handleClass,
+            currentProcessSelector
+        );
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+
+    SEL currentStateSelector = NSSelectorFromString(@"currentState");
+    if (![handle respondsToSelector:currentStateSelector]) return nil;
+    @try {
+        return ((id (*)(id, SEL))objc_msgSend)(handle, currentStateSelector);
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static id CIAssertionValue(id object, NSString *key) {
+    if (!object || key.length == 0) return nil;
+    @try {
+        return [object valueForKey:key];
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static BOOL CITextContainsCaseInsensitive(
+    NSString *text,
+    NSString *needle
+) {
+    if (text.length == 0 || needle.length == 0) return NO;
+    return [text rangeOfString:needle
+                      options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+static BOOL CITextContainsCurrentPIDToken(NSString *text) {
+    if (text.length == 0) return NO;
+    NSString *pidText = [NSString stringWithFormat:@"%d", getpid()];
+    NSCharacterSet *digits = NSCharacterSet.decimalDigitCharacterSet;
+    NSRange searchRange = NSMakeRange(0, text.length);
+    while (searchRange.length > 0) {
+        NSRange match = [text rangeOfString:pidText
+                                   options:0
+                                     range:searchRange];
+        if (match.location == NSNotFound) return NO;
+        BOOL validPrefix = match.location == 0 ||
+            ![digits characterIsMember:[text characterAtIndex:
+                match.location - 1]];
+        NSUInteger end = NSMaxRange(match);
+        BOOL validSuffix = end == text.length ||
+            ![digits characterIsMember:[text characterAtIndex:end]];
+        if (validPrefix && validSuffix) return YES;
+        NSUInteger next = match.location + 1;
+        searchRange = NSMakeRange(next, text.length - next);
+    }
+    return NO;
+}
+
+static BOOL CITargetRepresentsCurrentProcess(
+    id target,
+    NSString *descriptorText
+) {
+    NSArray<NSString *> *pidKeys = @[
+        @"pid",
+        @"processIdentifier",
+        @"targetPid",
+    ];
+    for (NSString *key in pidKeys) {
+        id value = CIAssertionValue(target, key);
+        if ([value respondsToSelector:@selector(intValue)] &&
+            [value intValue] == getpid()) {
+            return YES;
+        }
+    }
+
+    NSString *targetText = [target description];
+    NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier;
+    if (bundleIdentifier.length > 0 &&
+        (CITextContainsCaseInsensitive(targetText, bundleIdentifier) ||
+         CITextContainsCaseInsensitive(
+             descriptorText,
+             bundleIdentifier))) {
+        return YES;
+    }
+
+    return CITextContainsCurrentPIDToken(targetText) ||
+        CITextContainsCurrentPIDToken(descriptorText);
+}
+
+static BOOL CIExplanationRejectsLaunchPrefetch(id assertion) {
+    id value = CIAssertionValue(assertion, @"explanation");
+    if (![value isKindOfClass:NSString.class]) return NO;
+    NSString *explanation = value;
+    if (explanation.length == 0) return NO;
+    return !CITextContainsCaseInsensitive(
+        explanation,
+        @"app_launch_measurement"
+    );
+}
+
+static BOOL CIIsCurrentProcessLaunchPrefetchAssertion(id assertion) {
+    if (CIExplanationRejectsLaunchPrefetch(assertion)) return NO;
+    id descriptor = CIAssertionValue(assertion, @"descriptor");
+    NSString *descriptorText = [descriptor description];
+    NSString *explanation = [CIAssertionValue(
+        assertion,
+        @"explanation"
+    ) description];
+    NSString *combinedExplanation = [NSString stringWithFormat:
+        @"%@ %@", explanation ?: @"", descriptorText ?: @""];
+    if (!CITextContainsCaseInsensitive(
+            combinedExplanation,
+            @"app_launch_measurement") ||
+        !CITextContainsCaseInsensitive(
+            combinedExplanation,
+            @"pageins recording enabled")) {
+        return NO;
+    }
+
+    NSString *attributesText = [CIAssertionValue(
+        assertion,
+        @"attributes"
+    ) description];
+    NSString *combinedAttributes = [NSString stringWithFormat:
+        @"%@ %@", descriptorText ?: @"", attributesText ?: @""];
+    if (!CITextContainsCaseInsensitive(
+            combinedAttributes,
+            @"pagein-prefetching") ||
+        !CITextContainsCaseInsensitive(
+            combinedAttributes,
+            @"LaunchPrefetch")) {
+        return NO;
+    }
+
+    id target = CIAssertionValue(assertion, @"target");
+    if (!target) target = CIAssertionValue(descriptor, @"target");
+    return CITargetRepresentsCurrentProcess(target, descriptorText);
+}
+
+static BOOL CIAssertionIsValid(id assertion) {
+    id value = CIAssertionValue(assertion, @"valid");
+    return !value || ![value respondsToSelector:@selector(boolValue)] ||
+        [value boolValue];
+}
+
+static void CIReleaseLaunchPrefetchAssertions(
+    NSArray *assertions,
+    NSString *reason
+) {
+    NSUInteger releasedCount = 0;
+    for (id assertion in assertions) {
+        if (!CIAssertionIsValid(assertion)) continue;
+        CIRBSAssertionInvalidateImplementation invalidate =
+            CIOriginalRBSAssertionInvalidate;
+        if (!invalidate) continue;
+        invalidate(assertion, NSSelectorFromString(@"invalidate"));
+        releasedCount++;
+    }
+    [CILogStore.sharedStore
+        recordLevel:CILogLevelInfo
+           category:@"LaunchPrefetch"
+             format:@"Released %lu retained LaunchPrefetch assertion(s): %@.",
+                    (unsigned long)releasedCount,
+                    reason.length > 0 ? reason : @"requested"];
+}
+
+static void CILaunchPrefetchAssertionInvalidate(id assertion, SEL selector) {
+    CIRBSAssertionInvalidateImplementation original =
+        CIOriginalRBSAssertionInvalidate;
+    if (!original) return;
+
+    if (!CILaunchPrefetchRetentionProbeEnabled) {
+        original(assertion, selector);
+        return;
+    }
+
+    BOOL shouldRetain = NO;
+    BOOL rejectedCandidate = NO;
+    NSUInteger retainedCount = 0;
+    NSString *rejectedTarget = nil;
+    @synchronized (CIRetainedLaunchPrefetchAssertions) {
+        if (CILaunchPrefetchRetentionProbeEnabled &&
+            !CILaunchPrefetchRetentionProbeReleasing &&
+            CIIsCurrentProcessLaunchPrefetchAssertion(assertion)) {
+            if ([CIRetainedLaunchPrefetchAssertions
+                    containsObject:assertion]) {
+                shouldRetain = YES;
+                retainedCount =
+                    CIRetainedLaunchPrefetchAssertions.count;
+            } else if (CIRetainedLaunchPrefetchAssertions.count <
+                           CIRetainedLaunchPrefetchAssertionLimit) {
+                [CIRetainedLaunchPrefetchAssertions addObject:assertion];
+                retainedCount =
+                    CIRetainedLaunchPrefetchAssertions.count;
+                shouldRetain = YES;
+            }
+        } else if (CILaunchPrefetchRetentionProbeEnabled &&
+                   !CILaunchPrefetchRetentionProbeReleasing) {
+            id descriptor = CIAssertionValue(assertion, @"descriptor");
+            NSString *descriptorText = [descriptor description];
+            if (CITextContainsCaseInsensitive(
+                    descriptorText,
+                    @"LaunchPrefetch") ||
+                CITextContainsCaseInsensitive(
+                    descriptorText,
+                    @"pageins recording enabled")) {
+                rejectedCandidate = YES;
+                id target = CIAssertionValue(assertion, @"target");
+                if (!target) {
+                    target = CIAssertionValue(descriptor, @"target");
+                }
+                rejectedTarget = [[target description] copy] ?: @"<nil>";
+            }
+        }
+    }
+
+    if (!shouldRetain) {
+        if (rejectedCandidate) {
+            [CILogStore.sharedStore
+                recordLevel:CILogLevelWarning
+                   category:@"LaunchPrefetch"
+                     format:@"Observed a LaunchPrefetch invalidation candidate, but the RBS safety matcher rejected it (target=%@, currentPID=%d).",
+                            rejectedTarget,
+                            getpid()];
+        }
+        original(assertion, selector);
+        return;
+    }
+
+    [CILogStore.sharedStore
+        recordLevel:CILogLevelInfo
+           category:@"LaunchPrefetch"
+             format:@"Intercepted client invalidation for this process's LaunchPrefetch assertion; retained count=%lu.",
+                    (unsigned long)retainedCount];
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(),
+        ^{
+            CILogProcessBackgroundEligibility(
+                @"LaunchPrefetch retention probe intercepted invalidation"
+            );
+        }
+    );
+}
+
+static void CIAppLaunchMeasurementReleaseReplacement(void) {
+    CIAppLaunchMeasurementReleaseImplementation original =
+        CIOriginalAppLaunchMeasurementRelease;
+    BOOL shouldSuppress = NO;
+    NSUInteger suppressedCount = 0;
+    @synchronized (CIRetainedLaunchPrefetchAssertions) {
+        shouldSuppress = CILaunchPrefetchRetentionProbeEnabled &&
+            !CILaunchPrefetchRetentionProbeReleasing;
+        if (shouldSuppress) {
+            CILaunchPrefetchReleaseWasSuppressed = YES;
+            CILaunchPrefetchSuppressedReleaseCount++;
+            suppressedCount = CILaunchPrefetchSuppressedReleaseCount;
+        }
+    }
+
+    if (!shouldSuppress) {
+        if (original) original();
+        return;
+    }
+
+    [CILogStore.sharedStore
+        recordLevel:CILogLevelInfo
+           category:@"LaunchPrefetch"
+             format:@"Intercepted app_launch_measurement release directly; its LaunchPrefetch assertion remains owned (suppressed calls=%lu).",
+                    (unsigned long)suppressedCount];
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(),
+        ^{
+            CILogProcessBackgroundEligibility(
+                @"Direct LaunchPrefetch release interception"
+            );
+        }
+    );
+}
+
+void CIReleaseRetainedLaunchPrefetchAssertions(NSString *reason) {
+    NSArray *assertions = nil;
+    BOOL releaseDirectOwnership = NO;
+    @synchronized (CIRetainedLaunchPrefetchAssertions) {
+        CILaunchPrefetchRetentionProbeReleasing = YES;
+        releaseDirectOwnership =
+            CILaunchPrefetchReleaseWasSuppressed &&
+            CIOriginalAppLaunchMeasurementRelease != NULL;
+        CILaunchPrefetchReleaseWasSuppressed = NO;
+        assertions = CIRetainedLaunchPrefetchAssertions.copy;
+        [CIRetainedLaunchPrefetchAssertions removeAllObjects];
+    }
+    if (releaseDirectOwnership) {
+        CIOriginalAppLaunchMeasurementRelease();
+        [CILogStore.sharedStore
+            recordLevel:CILogLevelInfo
+               category:@"LaunchPrefetch"
+                 format:@"Released the directly retained app_launch_measurement assertion: %@.",
+                        reason.length > 0 ? reason : @"requested"];
+    }
+    if (assertions.count > 0) {
+        CIReleaseLaunchPrefetchAssertions(assertions, reason);
+    }
+    @synchronized (CIRetainedLaunchPrefetchAssertions) {
+        CILaunchPrefetchRetentionProbeReleasing = NO;
+    }
+}
+
+static const char *CISkipTypeQualifiers(const char *encoding) {
+    if (!encoding) return NULL;
+    while (*encoding && strchr("rnNoORV", *encoding)) encoding++;
+    return encoding;
+}
+
+static BOOL CIAssertionInvalidateHasExpectedSignature(Method method) {
+    if (!method) return NO;
+    BOOL returnsVoid = NO;
+    char *returnType = method_copyReturnType(method);
+    if (returnType) {
+        const char *bare = CISkipTypeQualifiers(returnType);
+        returnsVoid = bare && bare[0] == _C_VOID && bare[1] == '\0';
+        free(returnType);
+    }
+    return returnsVoid && method_getNumberOfArguments(method) == 2;
+}
+
+static const char *const CIAppLaunchMeasurementReleaseSymbolName =
+    "alm_release_pageins_recording_assertion";
+
+static void *CIFindAppLaunchMeasurementRelease(NSString **resolvedImage) {
+    void *symbol = dlsym(RTLD_DEFAULT,
+                         CIAppLaunchMeasurementReleaseSymbolName);
+    if (symbol) {
+        Dl_info info;
+        if (resolvedImage && dladdr(symbol, &info) && info.dli_fname) {
+            *resolvedImage = @(info.dli_fname);
+        }
+        return symbol;
+    }
+    for (NSString *path in @[
+        @"/usr/lib/libapp_launch_measurement.dylib",
+        @"/usr/lib/system/libsystem_launch_measurement.dylib",
+        @"/System/Library/PrivateFrameworks/AppLaunchMeasurement.framework/AppLaunchMeasurement",
+    ]) {
+        void *handle = dlopen(path.fileSystemRepresentation, RTLD_LAZY);
+        if (!handle) continue;
+        symbol = dlsym(handle, CIAppLaunchMeasurementReleaseSymbolName);
+        if (symbol) {
+            if (resolvedImage) *resolvedImage = path;
+            return symbol;
+        }
+    }
+    return NULL;
+}
+
+static NSString *CIDescribeMeasurementImages(void) {
+    NSMutableArray<NSString *> *matches = [NSMutableArray array];
+    uint32_t count = _dyld_image_count();
+    for (uint32_t index = 0; index < count; index++) {
+        const char *name = _dyld_get_image_name(index);
+        if (name && strcasestr(name, "measurement")) {
+            [matches addObject:[@(name) lastPathComponent]];
+        }
+    }
+    return matches.count > 0
+        ? [matches componentsJoinedByString:@", "] : @"none";
+}
+
+static void CIInstallLaunchPrefetchHooksIfNeeded(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        CILoadRunningBoardServices();
+
+        NSString *resolvedImage = nil;
+        void *releaseSymbol =
+            CIFindAppLaunchMeasurementRelease(&resolvedImage);
+        if (!releaseSymbol) {
+            [CILogStore.sharedStore
+                recordLevel:CILogLevelWarning
+                   category:@"LaunchPrefetch"
+                     format:@"Could not resolve %s in any loaded image. Images hinting at launch measurement: %@.",
+                            CIAppLaunchMeasurementReleaseSymbolName,
+                            CIDescribeMeasurementImages()];
+        }
+        if (releaseSymbol) {
+            void *originalRelease = NULL;
+            MSHookFunction(
+                releaseSymbol,
+                (void *)CIAppLaunchMeasurementReleaseReplacement,
+                &originalRelease
+            );
+            CIOriginalAppLaunchMeasurementRelease =
+                (CIAppLaunchMeasurementReleaseImplementation)
+                    originalRelease;
+            CIDirectLaunchPrefetchReleaseHookInstalled =
+                originalRelease != NULL;
+        }
+
+        Class assertionClass = NSClassFromString(@"RBSAssertion");
+        Method method = class_getInstanceMethod(
+            assertionClass,
+            NSSelectorFromString(@"invalidate")
+        );
+        if (method && !CIAssertionInvalidateHasExpectedSignature(method)) {
+            const char *encoding = method_getTypeEncoding(method);
+            [CILogStore.sharedStore
+                recordLevel:CILogLevelError
+                   category:@"LaunchPrefetch"
+                     format:@"Refusing to hook -[RBSAssertion invalidate]: its signature is \"%s\", not void (id, SEL). Replacing it would corrupt every unrelated assertion call in this process.",
+                            encoding ?: "unknown"];
+        } else if (method) {
+            IMP previous = method_setImplementation(
+                method,
+                (IMP)CILaunchPrefetchAssertionInvalidate
+            );
+            CIOriginalRBSAssertionInvalidate =
+                (CIRBSAssertionInvalidateImplementation)previous;
+            CIRBSAssertionRetentionFallbackInstalled = previous != NULL;
+        }
+        CILaunchPrefetchRetentionProbeInstalled =
+            CIDirectLaunchPrefetchReleaseHookInstalled ||
+            CIRBSAssertionRetentionFallbackInstalled;
+        if (!CILaunchPrefetchRetentionProbeInstalled) {
+            [CILogStore.sharedStore
+                recordLevel:CILogLevelWarning
+                   category:@"LaunchPrefetch"
+                    message:@"The LaunchPrefetch retention probe is unavailable: neither the direct app_launch_measurement release symbol nor RBSAssertion.invalidate could be hooked on this iOS version."];
+        }
+        [CILogStore.sharedStore
+            recordLevel:CILogLevelInfo
+               category:@"LaunchPrefetch"
+                 format:@"LaunchPrefetch hooks installed=%@ directReleaseHook=%@ (image %@) rbsFallback=%@.",
+                        CILaunchPrefetchRetentionProbeInstalled
+                            ? @"yes" : @"no",
+                        CIDirectLaunchPrefetchReleaseHookInstalled
+                            ? @"yes" : @"no",
+                        resolvedImage.lastPathComponent ?: @"unresolved",
+                        CIRBSAssertionRetentionFallbackInstalled
+                            ? @"yes" : @"no"];
+    });
+}
+
+void CIInstallLaunchPrefetchRetentionProbe(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        CIRetainedLaunchPrefetchAssertions = [NSMutableArray array];
+        CILaunchPrefetchRetentionProbeEnabled = YES;
+        CIInstallLaunchPrefetchHooksIfNeeded();
+    });
+}
+
+void CIReloadLaunchPrefetchRetentionProbe(void) {
+    CIInstallLaunchPrefetchRetentionProbe();
+    CIInstallLaunchPrefetchHooksIfNeeded();
+    @synchronized (CIRetainedLaunchPrefetchAssertions) {
+        CILaunchPrefetchRetentionProbeEnabled = YES;
+    }
+}
+
+static NSString *CIDescribeStateKey(id state, NSString *key) {
+    if (!state || key.length == 0) return nil;
+    @try {
+        id value = [state valueForKey:key];
+        if (!value) return nil;
+        if ([value respondsToSelector:@selector(allObjects)]) {
+            value = ((id (*)(id, SEL))objc_msgSend)(
+                value,
+                @selector(allObjects)
+            );
+        }
+        if ([value isKindOfClass:NSArray.class]) {
+            NSArray *items = (NSArray *)value;
+            if (items.count == 0) return @"none";
+            NSMutableArray<NSString *> *described =
+                [NSMutableArray arrayWithCapacity:items.count];
+            for (id item in items) {
+                [described addObject:[item description] ?: @"?"];
+            }
+            return [described componentsJoinedByString:@", "];
+        }
+        return [value description];
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static NSString *CIDescribeAssertionDomains(id state) {
+    if (!state) return nil;
+    NSString *description = [state description];
+    if (description.length == 0) return nil;
+    static NSRegularExpression *expression;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        expression = [NSRegularExpression
+            regularExpressionWithPattern:@"domain:\"([^\"]*)\""
+                                 options:0
+                                   error:nil];
+    });
+    if (!expression) return nil;
+
+    NSCountedSet<NSString *> *domains = [NSCountedSet set];
+    [expression enumerateMatchesInString:description
+                                options:0
+                                  range:NSMakeRange(0, description.length)
+                             usingBlock:^(NSTextCheckingResult *match,
+                                          __unused NSMatchingFlags flags,
+                                          __unused BOOL *stop) {
+        if (match.numberOfRanges < 2) return;
+        NSString *domain =
+            [description substringWithRange:[match rangeAtIndex:1]];
+        if (domain.length == 0) return;
+        if ([domain hasPrefix:@"com.apple."]) {
+            domain = [domain substringFromIndex:@"com.apple.".length];
+        }
+        [domains addObject:domain];
+    }];
+    if (domains.count == 0) return @"none";
+
+    NSMutableArray<NSString *> *described =
+        [NSMutableArray arrayWithCapacity:domains.count];
+    for (NSString *domain in domains) {
+        NSUInteger count = [domains countForObject:domain];
+        [described addObject:count > 1
+            ? [NSString stringWithFormat:@"%@ x%lu",
+                domain, (unsigned long)count]
+            : domain];
+    }
+    [described sortUsingSelector:@selector(compare:)];
+    return [described componentsJoinedByString:@", "];
+}
+
+static NSString *CIClippedDescription(NSString *value) {
+    NSString *text = value ?: @"";
+    text = [text stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    if (text.length <= CIDiagnosticsMaximumDescriptionLength) return text;
+    NSRange range = [text rangeOfComposedCharacterSequencesForRange:
+        NSMakeRange(0, CIDiagnosticsMaximumDescriptionLength)];
+    return [[text substringWithRange:range] stringByAppendingString:@"…"];
+}
+
+void CILogProcessBackgroundEligibility(NSString *reason) {
+    if (!NSThread.isMainThread) {
+        NSString *copiedReason = [reason copy];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            CILogProcessBackgroundEligibility(copiedReason);
+        });
+        return;
+    }
+
+    UIApplication *application = UIApplication.sharedApplication;
+    NSTimeInterval remaining = application.backgroundTimeRemaining;
+    NSString *remainingText = remaining >= DBL_MAX / 2
+        ? @"unlimited"
+        : [NSString stringWithFormat:@"%.1fs", remaining];
+
+    id state = CICurrentRunningBoardProcessState();
+    NSString *endowments =
+        CIDescribeStateKey(state, @"endowmentNamespaces") ?: @"none";
+    NSString *taskState =
+        CIDescribeStateKey(state, @"taskState") ?: @"unavailable";
+    NSString *tags = CIDescribeStateKey(state, @"tags") ?: @"none";
+    NSString *cpuRole =
+        CIDescribeStateKey(state, @"cpuRole") ?: @"unavailable";
+    NSString *assertions =
+        CIDescribeAssertionDomains(state) ?: @"unavailable";
+
+    [CILogStore.sharedStore
+        recordLevel:CILogLevelInfo
+           category:@"Eligibility"
+             format:@"%@ | appState=%ld bgTimeRemaining=%@ | taskState=%@ cpuRole=%@ tags=[%@] endowments=[%@] | assertions=[%@]",
+                    reason.length > 0 ? reason : @"snapshot",
+                    (long)application.applicationState,
+                    remainingText,
+                    taskState,
+                    cpuRole,
+                    tags,
+                    endowments,
+                    assertions];
+
+    if (state) {
+        [CILogStore.sharedStore
+            recordLevel:CILogLevelDebug
+               category:@"Eligibility"
+                 format:@"RunningBoard raw state: %@",
+                        CIClippedDescription([state description])];
+    } else {
+        [CILogStore.sharedStore
+            recordLevel:CILogLevelDebug
+               category:@"Eligibility"
+                message:@"RunningBoard process state was unavailable; only the public background allowance was sampled."];
+    }
+}
