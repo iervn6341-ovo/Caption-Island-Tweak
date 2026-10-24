@@ -3,9 +3,9 @@
 // Registration goes through YTVideoOverlay rather than hooking the overlay
 // directly: that framework already owns placement (anchored off the fullscreen
 // button and walking left), visibility, the fullscreen superview swap, and the
-// user-facing Enabled/Position/Order settings rows. Hooking the player bar here
-// would mean re-deriving all of it and fighting the six visibility hooks it
-// installs. Our only contributions are an image and a tap handler.
+// user-facing visibility/order settings. Caption Island requests one fixed
+// bottom slot; the hooks below provide its image, gray background and action,
+// with a defensive cleanup of legacy top copies.
 #import <UIKit/UIKit.h>
 
 #import "../YTVideoOverlay/Header.h"
@@ -44,14 +44,12 @@ void CISetPlayerButtonEnabled(BOOL enabled) {
 }
 
 CIPlayerButtonPosition CIPlayerButtonPosition_(void) {
-    return [NSUserDefaults.standardUserDefaults
-        integerForKey:CIPlayerButtonPositionKey()] ==
-            CIPlayerButtonPositionTop
-        ? CIPlayerButtonPositionTop : CIPlayerButtonPositionBottom;
+    return CIPlayerButtonPositionBottom;
 }
 
 void CISetPlayerButtonPosition(CIPlayerButtonPosition position) {
-    [NSUserDefaults.standardUserDefaults setInteger:position
+    (void)position;
+    [NSUserDefaults.standardUserDefaults setInteger:CIPlayerButtonPositionBottom
         forKey:CIPlayerButtonPositionKey()];
 }
 
@@ -94,6 +92,16 @@ static UIImage *CIButtonImage(void) {
 
 %hook YTMainAppControlsOverlayView
 
+- (void)layoutSubviews {
+    %orig;
+    // Remove any legacy top copy, including when YouTube makes all native
+    // controls visible again. The patched helper no longer creates this copy.
+    UIView *button = self.overlayButtons[CIButtonTweakKey];
+    button.hidden = YES;
+    button.alpha = 0;
+    [button removeFromSuperview];
+}
+
 - (UIImage *)buttonImage:(NSString *)tweakId {
     return [tweakId isEqualToString:CIButtonTweakKey]
         ? CIButtonImage() : %orig;
@@ -114,6 +122,27 @@ static UIImage *CIButtonImage(void) {
 
 %hook YTInlinePlayerBarContainerView
 
+- (void)layoutSubviews {
+    %orig;
+    UIView *button = self.overlayButtons[CIButtonTweakKey];
+    if (button == nil) return;
+    UIView *reference = [self respondsToSelector:@selector(enterFullscreenButton)]
+        ? [self enterFullscreenButton] : nil;
+    if (reference == nil || reference.hidden) {
+        reference = [self respondsToSelector:@selector(exitFullscreenButton)]
+            ? [self exitFullscreenButton] : nil;
+    }
+    UIColor *background = reference.backgroundColor;
+    if (background == nil || CGColorGetAlpha(background.CGColor) < 0.05) {
+        background = [UIColor colorWithWhite:0.20 alpha:0.85];
+    }
+    button.backgroundColor = background;
+    CGFloat radius = reference.layer.cornerRadius;
+    button.layer.cornerRadius = radius > 0 ? radius
+        : MIN(CGRectGetWidth(button.bounds), CGRectGetHeight(button.bounds)) / 2.0;
+    button.clipsToBounds = YES;
+}
+
 - (UIImage *)buttonImage:(NSString *)tweakId {
     return [tweakId isEqualToString:CIButtonTweakKey]
         ? CIButtonImage() : %orig;
@@ -129,6 +158,8 @@ static UIImage *CIButtonImage(void) {
 %end
 
 void CIInstallPlayerButton(void) {
+    // Migrate existing top-placement preferences to the single bottom button.
+    CISetPlayerButtonPosition(CIPlayerButtonPositionBottom);
     // YTVideoOverlay defaults a newly registered tweak to disabled and to the
     // top-right slot. Seed both so the button appears beside the fullscreen
     // control without the user having to find the setting first;
@@ -140,6 +171,7 @@ void CIInstallPlayerButton(void) {
     initYTVideoOverlay(CIButtonTweakKey, @{
         AccessibilityLabelKey: CILocalized(@"PANEL_TITLE", @"Caption Island"),
         SelectorKey: @"didPressCaptionIsland:",
+        @"fixedPosition": @(CIPlayerButtonPositionBottom),
         // Our key, so the switch lives on the Caption Island settings screen and
         // YTVideoOverlay does not draw a second one of its own.
         ToggleKey: CIPlayerButtonEnabledKey,
