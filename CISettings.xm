@@ -1048,6 +1048,17 @@ static NSArray *CIBuildSettingsItems(YTSettingsViewController * __weak settingsV
         }]];
 
     [items addObject:[itemClass
+        switchItemWithTitle:CILocalized(@"AOD_UPDATE_FIXES", @"AOD update test fixes")
+        titleDescription:CILocalized(@"AOD_UPDATE_FIXES_DESCRIPTION", @"Experimental: coalesce waiting lyrics and avoid redundant presentation updates. Disable for a baseline comparison; restart YouTube before each run.")
+        accessibilityIdentifier:@"CaptionIsland.AODUpdateFixes"
+        switchOn:CIPreferenceBool(CIAODUpdateFixesKey, YES)
+        switchBlock:^BOOL(__unused YTSettingsCell *cell, BOOL enabled) {
+            [NSUserDefaults.standardUserDefaults setBool:enabled forKey:CIAODUpdateFixesKey];
+            CIAODLog(@"event=test_configuration fixes=%@", enabled ? @"on" : @"off");
+            return YES;
+        } settingItemId:0]];
+
+    [items addObject:[itemClass
         switchItemWithTitle:CILocalized(@"DEBUG_LOGGING", @"Detailed logging")
         titleDescription:CILocalized(@"DEBUG_LOGGING_DESCRIPTION", @"Include detailed diagnostics. Lyrics, URLs, cookies, and authorization data are never recorded.")
         accessibilityIdentifier:@"CaptionIsland.Debug"

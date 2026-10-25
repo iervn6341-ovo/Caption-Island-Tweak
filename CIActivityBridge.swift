@@ -50,10 +50,15 @@ private func sanitizedActivityText(
 
 @objc(CIActivityBridge)
 public final class CIActivityBridge: NSObject {
-    private static let commandQueue = DispatchQueue(
-        label: "com.captionisland.activity.commands"
-    )
-    private static var commandTail: Task<Void, Never>?
+    private static let pipeline = CIActivityCommandPipeline()
+    static var aodFixesEnabled: Bool {
+        UserDefaults.standard.object(forKey: "CaptionIsland.AODUpdateFixes") as? Bool ?? true
+    }
+    static func trace(_ event: String) {
+        guard UserDefaults.standard.bool(forKey: "CaptionIsland.DebugLogging") else { return }
+        emit(level: "debug", message: String(format: "[AODDiag] t=%.3f ",
+            ProcessInfo.processInfo.systemUptime) + event)
+    }
     private static let metadataLogLock = NSLock()
     private static var didReportMissingSupportKey = false
     private static var didReportBundleIdentifierWarning = false
@@ -169,7 +174,7 @@ public final class CIActivityBridge: NSObject {
     public static func refreshForPresentation(reason: String) {
         guard targetSupportsLiveActivities(logIfMissing: false) else { return }
         let safeReason = sanitizedActivityText(reason, maximumBytes: 160)
-        enqueue {
+        enqueue(kind: .presentation) {
             await CIActivityManager.shared.refreshPresentation(
                 reason: safeReason
             )
@@ -199,7 +204,8 @@ public final class CIActivityBridge: NSObject {
         let endMilliseconds = milliseconds(cueEnd)
         let nextStartMilliseconds = milliseconds(nextCueStart)
         let nextEndMilliseconds = milliseconds(nextCueEnd)
-        enqueue {
+        trace("event=cue_ingress cue=\(startMilliseconds):\(endMilliseconds) playing=\(playing) fixes=\(aodFixesEnabled)")
+        enqueue(kind: .lyric) {
             await CIActivityManager.shared.update(
                 line: safeText,
                 source: safeSource,
@@ -218,7 +224,7 @@ public final class CIActivityBridge: NSObject {
     public static func showGap(title: String) {
         guard targetSupportsLiveActivities(logIfMissing: false) else { return }
         let safeTitle = sanitizedActivityText(title, maximumBytes: 384)
-        enqueue {
+        enqueue(kind: .lyric) {
             await CIActivityManager.shared.showGap(
                 title: safeTitle
             )
@@ -261,16 +267,14 @@ public final class CIActivityBridge: NSObject {
     }
 
     private static func enqueue(
+        kind: CIActivityCommandKind = .control,
         _ operation: @escaping @Sendable () async -> Void
     ) {
-        commandQueue.sync {
-            let previous = commandTail
-            commandTail = Task {
-                if let previous {
-                    await previous.value
-                }
-                await operation()
-            }
+        pipeline.submit(kind: kind, coalescing: aodFixesEnabled) { metrics in
+            trace("event=command_begin seq=\(metrics.sequence) kind=\(metrics.kind.rawValue) wait_ms=\(Int(metrics.wait * 1000)) pending=\(metrics.pending) coalesced=\(metrics.coalesced)")
+            let began = ProcessInfo.processInfo.systemUptime
+            await operation()
+            trace("event=command_end seq=\(metrics.sequence) elapsed_ms=\(Int((ProcessInfo.processInfo.systemUptime - began) * 1000))")
         }
     }
 
@@ -340,11 +344,12 @@ private actor CIActivityManager {
     private var didLogMissingActivity = false
     private var isStartBlockedByUnsupportedTarget = false
     private var lastUpdateHeartbeatUptime: TimeInterval = 0
+    private var lastSubmissionUptime: TimeInterval = 0
     private var activityStateTask: Task<Void, Never>?
+    private var activityContentTask: Task<Void, Never>?
     private var activityObservationGeneration = 0
-    private var pendingVerification: (
+    private var pendingContentSample: (
         revision: Int,
-        source: String,
         uptime: TimeInterval
     )?
 
@@ -465,7 +470,9 @@ private actor CIActivityManager {
     ) async {
         // A revision left over from the previous activity would be checked
         // against the new activity's id and always look rejected.
-        pendingVerification = nil
+        pendingContentSample = nil
+        lastSubmissionUptime = 0
+        CIActivityBridge.trace("event=activity_request activities_enabled=\(ActivityAuthorizationInfo().areActivitiesEnabled) fixes=\(CIActivityBridge.aodFixesEnabled)")
         do {
             activity = try Activity.request(
                 attributes: CICaptionActivityAttributes(
@@ -534,6 +541,12 @@ private actor CIActivityManager {
             )
             return
         }
+        let sinceSubmission = ProcessInfo.processInfo.systemUptime - lastSubmissionUptime
+        if CIActivityBridge.aodFixesEnabled, activity.activityState == .active,
+           lastSubmissionUptime > 0, sinceSubmission >= 0, sinceSubmission < 5 {
+            CIActivityBridge.trace("event=refresh_skipped recent_submission_ms=\(Int(sinceSubmission * 1000))")
+            return
+        }
         revision += 1
         let state: CICaptionActivityAttributes.ContentState
         if lastLine.isEmpty {
@@ -583,6 +596,7 @@ private actor CIActivityManager {
                       ) else {
                     return
                 }
+                CIActivityBridge.trace("event=activity_state activity=\(observedActivityID.prefix(8)) state=\(state)")
                 switch state {
                 case .dismissed:
                     await self.observedActivityBecameInactive(
@@ -601,6 +615,15 @@ private actor CIActivityManager {
                 }
             }
         }
+        activityContentTask = Task {
+            for await content in observedActivity.contentUpdates {
+                guard !Task.isCancelled,
+                      self.isCurrentActivityObservation(activityID: observedActivityID,
+                        generation: observationGeneration) else { return }
+                // This observes ActivityKit content, not a Widget/AOD render acknowledgement.
+                CIActivityBridge.trace("event=content_observed activity=\(observedActivityID.prefix(8)) revision=\(content.state.revision) cue=\(content.state.cueStartMS):\(content.state.cueEndMS) render_ack=unavailable")
+            }
+        }
     }
 
     private func stopActivityObservation(
@@ -611,6 +634,8 @@ private actor CIActivityManager {
             activityStateTask?.cancel()
         }
         activityStateTask = nil
+        activityContentTask?.cancel()
+        activityContentTask = nil
     }
 
     private func isCurrentActivityObservation(
@@ -763,6 +788,7 @@ private actor CIActivityManager {
         self.dismissedVideoID = ""
         self.didLogMissingActivity = false
         self.lastUpdateHeartbeatUptime = 0
+        self.lastSubmissionUptime = 0
         if endingActivity != nil {
             CIActivityBridge.emit(level: "info", message: "Ended native Live Activity")
         }
@@ -799,11 +825,14 @@ private actor CIActivityManager {
         // Theos iOS 17.5 SDK distributions don't expose the newer timestamp
         // overload in their Swift interface. Revision remains part of every
         // state, so rapid cue changes are still distinct and ordered.
-        verifyPreviousSubmission(activity: activity)
+        samplePreviousSubmission(activity: activity)
+        let began = ProcessInfo.processInfo.systemUptime
+        CIActivityBridge.trace("event=submit_begin activity=\(activity.id.prefix(8)) revision=\(safeState.revision) cue=\(safeState.cueStartMS):\(safeState.cueEndMS) state=\(activity.activityState)")
         await activity.update(content)
-        pendingVerification = (
+        lastSubmissionUptime = ProcessInfo.processInfo.systemUptime
+        CIActivityBridge.trace("event=submit_return activity=\(activity.id.prefix(8)) revision=\(safeState.revision) elapsed_ms=\(Int((lastSubmissionUptime - began) * 1000)) render_ack=unavailable")
+        pendingContentSample = (
             revision: safeState.revision,
-            source: safeState.source.isEmpty ? "gap" : safeState.source,
             uptime: ProcessInfo.processInfo.systemUptime
         )
         let uptime = ProcessInfo.processInfo.systemUptime
@@ -817,46 +846,25 @@ private actor CIActivityManager {
         }
     }
 
-    /// Reports whether the previously submitted revision actually landed.
-    ///
-    /// `Activity.update(_:)` never throws and stays completely silent when
-    /// liveactivitiesd refuses the write, which is exactly what happens once
-    /// the process is classified as background-media-only. Reading the stored
-    /// revision back is the only way to tell — but reading it immediately
-    /// after `update(_:)` races the daemon round-trip and reports rejections
-    /// that never happened, so the check is deferred until the next cue.
-    private func verifyPreviousSubmission(
+    /// Samples local content on the next cue. Neither an update return nor a
+    /// content readback proves that the system rendered a revision on AOD.
+    private func samplePreviousSubmission(
         activity: Activity<CICaptionActivityAttributes>
     ) {
-        guard let pending = pendingVerification else { return }
+        guard let pending = pendingContentSample else { return }
         // Back-to-back revisions land within milliseconds of each other and
         // would hit the same propagation race. Drop those rather than log a
         // verdict that cannot be trusted.
         guard ProcessInfo.processInfo.systemUptime - pending.uptime >= 0.4
         else {
-            pendingVerification = nil
+            pendingContentSample = nil
             return
         }
-        pendingVerification = nil
+        pendingContentSample = nil
         let storedRevision = Activity<CICaptionActivityAttributes>.activities
             .first { $0.id == activity.id }?
             .content.state.revision
-        if storedRevision == pending.revision {
-            CIActivityBridge.emit(
-                level: "info",
-                message: "Caption reached the Live Activity: revision "
-                    + "\(pending.revision) (\(pending.source))"
-            )
-        } else {
-            CIActivityBridge.emit(
-                level: "warning",
-                message: "Live Activity did not accept revision "
-                    + "\(pending.revision) (\(pending.source)); the system "
-                    + "still reports "
-                    + (storedRevision.map { "revision \($0)" }
-                        ?? "no matching activity")
-            )
-        }
+        CIActivityBridge.trace("event=content_sample expected=\(pending.revision) stored=\(storedRevision.map(String.init) ?? "missing") age_ms=\(Int((ProcessInfo.processInfo.systemUptime - pending.uptime) * 1000)) render_ack=unavailable")
     }
 
     private func boundedState(

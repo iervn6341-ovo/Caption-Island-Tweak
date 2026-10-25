@@ -10,6 +10,22 @@ are unchanged.
 CaptionIsland is a tweak that displays captions and lyrics for the video
 currently playing in YouTube.
 
+## Caption-Fix AOD experiment
+
+This branch adds **AOD update test fixes** to settings (default on here). It
+coalesces adjacent unsent lyric/presentation commands and skips redundant
+presentation refreshes within five seconds of a submission. Lifecycle controls
+remain ordered; disabling the switch provides a FIFO comparison in the same
+instrumented build. Restart YouTube before each A/B run.
+
+With Detailed logging enabled, `[AODDiag]` records lifecycle/clock/cue stages,
+queue waits, ActivityKit call duration and local content revisions. These entries
+exclude lyric text and credentials. Content observations and `update` returns
+are not AOD render acknowledgements. The existing LaunchPrefetch retention
+strategy is unchanged; hook counters cannot prove system execution eligibility.
+Expensive RunningBoard diagnostic sampling is limited to every 30 seconds.
+Real repeated-lock/AOD tests are required to determine whether this helps.
+
 ## CarPlay and small Live Activities
 
 On iOS 18 and later, the extension opts into the small Activity family used by

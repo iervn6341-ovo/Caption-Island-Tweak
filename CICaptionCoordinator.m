@@ -1224,6 +1224,8 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         CIAdjustedCaptionLookupTime(time, advance);
     NSInteger index = [self cueIndexAtTime:effectiveTime];
     if (index == self.displayedCueIndex) return;
+    CIAODLog(@"event=cue_selected index=%ld previous=%ld media_s=%.3f total=%lu",
+        (long)index, (long)self.displayedCueIndex, time, (unsigned long)self.cues.count);
     self.displayedCueIndex = index;
     if (index == NSNotFound) [self.presenter hide];
     else {
@@ -1439,6 +1441,9 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         estimatedTime = MAX(estimatedTime, boundary + 0.015);
         self.latestPlaybackTime = estimatedTime;
         self.lastSubmittedTime = estimatedTime;
+        CIAODLog(@"event=cue_timer boundary_s=%.3f estimated_s=%.3f late_ms=%.0f anchor_age_ms=%.0f",
+            boundary, estimatedTime, MAX(0, estimatedTime - boundary) * 1000,
+            MAX(0, uptime - self.playbackAnchorUptime) * 1000);
         NSInteger previousIndex = self.displayedCueIndex;
         [self renderAtTime:estimatedTime];
         [self scheduleCueBoundaryFromPlaybackTime:estimatedTime];

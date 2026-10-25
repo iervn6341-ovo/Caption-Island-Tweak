@@ -154,3 +154,5 @@
 "TITLE_KEYWORDS_RESET" = "Restore default phrases";
 "GEAR_MENU_ITEM" = "Show in the player settings menu";
 "GEAR_MENU_ITEM_DESCRIPTION" = "Adds a Caption Island row to the gear menu beside Quality and Playback speed. Independent of the player button, so either or both can be used.";
+"AOD_UPDATE_FIXES" = "AOD update test fixes";
+"AOD_UPDATE_FIXES_DESCRIPTION" = "Experimental: coalesce waiting lyrics and avoid redundant presentation updates. Disable for a baseline comparison; restart YouTube before each run.";

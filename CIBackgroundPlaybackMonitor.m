@@ -15,7 +15,8 @@ static const NSTimeInterval CIBackgroundClockInterval = 0.75;
 static const NSTimeInterval CIBackgroundClockLeeway = 0.15;
 static const NSTimeInterval CIBackgroundMinimumTimeChange = 0.04;
 static const NSTimeInterval CIBackgroundHeartbeatInterval = 30.0;
-static const NSTimeInterval CIBackgroundEligibilitySampleInterval = 2.5;
+// Avoid having the diagnosis itself repeatedly walk RunningBoard on the main queue.
+static const NSTimeInterval CIBackgroundEligibilitySampleInterval = 30.0;
 // How long playback must stay confidently paused before the background clock is
 // torn down. Long enough that scrubbing or a brief pause does not thrash the
 // timer, short enough that an idle process is not left ticking.
@@ -80,6 +81,10 @@ static double CIQuantizedPlaybackRate(double rate) {
 @property (nonatomic) NSUInteger controllerLeaseGeneration;
 @property (nonatomic) NSTimeInterval lastPiPPreparationUptime;
 @property (nonatomic) BOOL didSuppressAutomaticPiPForBackgroundTransition;
+@property (nonatomic) NSUInteger diagnosticBackgroundCycle;
+@property (nonatomic) NSTimeInterval lastAODClockLogUptime;
+- (void)recordAODLifecycle:(NSString *)event;
+- (void)protectedDataDidChange:(NSNotification *)notification;
 - (void)youPiPSuppressedAutomaticPiP:(NSNotification *)notification;
 - (void)synchronizeNowPlayingAtTime:(NSTimeInterval)playbackTime
                            duration:(NSTimeInterval)duration
@@ -117,6 +122,10 @@ static double CIQuantizedPlaybackRate(double rate) {
                       name:UIApplicationWillTerminateNotification object:nil];
         [center addObserver:self selector:@selector(sceneDidDisconnect:)
                       name:UISceneDidDisconnectNotification object:nil];
+        [center addObserver:self selector:@selector(protectedDataDidChange:)
+                      name:UIApplicationProtectedDataWillBecomeUnavailable object:nil];
+        [center addObserver:self selector:@selector(protectedDataDidChange:)
+                      name:UIApplicationProtectedDataDidBecomeAvailable object:nil];
         [center addObserver:self
                    selector:@selector(youPiPSuppressedAutomaticPiP:)
                        name:CIYouPiPAutomaticPiPSuppressedNotification
@@ -270,6 +279,7 @@ static double CIQuantizedPlaybackRate(double rate) {
 }
 
 - (void)applicationWillResignActive:(__unused NSNotification *)notification {
+    [self recordAODLifecycle:@"will_resign_active"];
     // Acquire the lease before YouTube swaps its inline player graph for PiP.
     // The ordinary weak reference can otherwise disappear during that gap.
     self.backgroundControllerLease = self.playerController;
@@ -288,6 +298,8 @@ static double CIQuantizedPlaybackRate(double rate) {
 
 - (void)applicationDidEnterBackground:(__unused NSNotification *)notification {
     self.applicationIsBackgrounded = YES;
+    self.diagnosticBackgroundCycle++;
+    [self recordAODLifecycle:@"did_enter_background"];
     if (!self.backgroundControllerLease) {
         self.backgroundControllerLease = self.playerController;
         self.controllerLeaseGeneration++;
@@ -304,11 +316,11 @@ static double CIQuantizedPlaybackRate(double rate) {
     if (nowPlayingInfo.count > 0) {
         [CILogStore.sharedStore recordLevel:CILogLevelInfo
             category:@"Activity"
-            message:@"Caption Island and YouTube Now Playing are both active. Submitted a fresh maximum-relevance caption revision; iOS still owns final Dynamic Island presentation arbitration."];
+            message:@"Caption Island and YouTube Now Playing are both active. Requested a caption presentation refresh; recent duplicate updates may be coalesced. iOS owns final presentation arbitration."];
     } else {
         [CILogStore.sharedStore recordLevel:CILogLevelDebug
             category:@"Activity"
-            message:@"Submitted a fresh caption revision for the background transition; no YouTube Now Playing metadata was published at that moment."];
+            message:@"Requested a caption presentation refresh for the background transition; no YouTube Now Playing metadata was published at that moment."];
     }
     if (self.didSuppressAutomaticPiPForBackgroundTransition) {
         [CILogStore.sharedStore recordLevel:CILogLevelInfo
@@ -328,9 +340,26 @@ static double CIQuantizedPlaybackRate(double rate) {
 
 - (void)applicationDidBecomeActive:(__unused NSNotification *)notification {
     self.applicationIsBackgrounded = NO;
+    [self recordAODLifecycle:@"did_become_active"];
     self.didSuppressAutomaticPiPForBackgroundTransition = NO;
     [self stopTimerWithReason:@"foreground callbacks resumed"];
     [self scheduleControllerLeaseRelease];
+}
+
+- (void)protectedDataDidChange:(NSNotification *)notification {
+    // Protected-data notifications are lifecycle evidence, not an AOD/screen-state API.
+    [self recordAODLifecycle:[notification.name isEqual:UIApplicationProtectedDataDidBecomeAvailable]
+        ? @"protected_data_available" : @"protected_data_will_lock"];
+}
+
+- (void)recordAODLifecycle:(NSString *)event {
+    if (!CIPreferenceBool(CIDebugLoggingKey, NO)) return;
+    UIApplication *app = UIApplication.sharedApplication;
+    CIAODLog(@"event=lifecycle transition=%@ cycle=%lu app_state=%ld protected_data=%d timer=%d fixes=%d low_power=%d thermal=%ld %@",
+        event, (unsigned long)self.diagnosticBackgroundCycle, (long)app.applicationState,
+        app.protectedDataAvailable, self.timer != nil, CIPreferenceBool(CIAODUpdateFixesKey, YES),
+        NSProcessInfo.processInfo.lowPowerModeEnabled, (long)NSProcessInfo.processInfo.thermalState,
+        CILaunchPrefetchRetentionSummary());
 }
 
 - (void)applicationWillTerminate:(__unused NSNotification *)notification {
@@ -401,6 +430,7 @@ static double CIQuantizedPlaybackRate(double rate) {
     self.lastHeartbeatUptime = 0;
     self.lastEligibilitySampleUptime = 0;
     self.lastTimerCallbackUptime = 0;
+    self.lastAODClockLogUptime = 0;
     self.lastNowPlayingSynchronizationUptime = 0;
     self.lastNowPlayingAttemptUptime = 0;
     self.lastPlaybackProgressUptime = 0;
@@ -516,6 +546,7 @@ static double CIQuantizedPlaybackRate(double rate) {
     });
     self.timer = timer;
     dispatch_resume(timer);
+    CIAODLog(@"event=timer_start cycle=%lu interval_ms=750", (unsigned long)self.diagnosticBackgroundCycle);
 
     if (!self.didLogAvailability) {
         self.didLogAvailability = YES;
@@ -534,6 +565,7 @@ static double CIQuantizedPlaybackRate(double rate) {
     if (!timer) return;
     dispatch_source_cancel(timer);
     self.timer = nil;
+    CIAODLog(@"event=timer_stop cycle=%lu reason=%@", (unsigned long)self.diagnosticBackgroundCycle, reason ?: @"none");
     if (reason.length > 0) {
         [CILogStore.sharedStore recordLevel:CILogLevelInfo
             category:@"Background"
@@ -661,6 +693,15 @@ static double CIQuantizedPlaybackRate(double rate) {
     NSTimeInterval playbackTime = shouldExtrapolateClock
         ? self.lastPlaybackTime + callbackGap * playbackRate
         : rawPlaybackTime;
+    if (CIPreferenceBool(CIDebugLoggingKey, NO) &&
+        (self.lastAODClockLogUptime == 0 || uptime - self.lastAODClockLogUptime >= 10)) {
+        self.lastAODClockLogUptime = uptime;
+        CIAODLog(@"event=clock cycle=%lu raw_s=%.3f effective_s=%.3f tick_gap_ms=%.0f native_age_ms=%.0f rate=%.2f reliable=%d extrapolated=%d low_power=%d thermal=%ld",
+            (unsigned long)self.diagnosticBackgroundCycle, rawPlaybackTime, playbackTime,
+            callbackGap * 1000, self.lastNativePlaybackUptime > 0 ? (uptime - self.lastNativePlaybackUptime) * 1000 : -1,
+            playbackRate, hasReliablePlaybackRate, shouldExtrapolateClock,
+            NSProcessInfo.processInfo.lowPowerModeEnabled, (long)NSProcessInfo.processInfo.thermalState);
+    }
     // Never rewind the caption while the raw clock is standing still. Once
     // extrapolation has moved past the frozen raw value, falling back to that
     // raw value would jump the display back a line; a genuine seek is
@@ -677,15 +718,8 @@ static double CIQuantizedPlaybackRate(double rate) {
             format:@"Background clock heartbeat at %.1fs (callback gap %.1fs).",
                    playbackTime, callbackGap];
     }
-    // Eligibility snapshots run on their own, much faster cadence, because
-    // refusals have been seen as little as four seconds into a background cycle
-    // and the 30s heartbeat steps straight over them.
-    //
-    // They are gated on the diagnostic-logging preference: each snapshot dlopens
-    // RunningBoardServices, walks it by KVC and runs a regex over a long
-    // description, which is far too much to repeat every 2.5s for the whole time
-    // a user is listening. The data is only ever read when investigating a
-    // refusal, and that investigation already requires the log toggle.
+    // Local assertion snapshots are supporting evidence, not an AOD render
+    // acknowledgement. Keep the expensive private-state walk infrequent.
     if (CIPreferenceBool(CIDebugLoggingKey, NO) &&
         (self.lastEligibilitySampleUptime == 0 ||
          uptime - self.lastEligibilitySampleUptime >=

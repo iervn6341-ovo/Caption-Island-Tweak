@@ -154,3 +154,5 @@
 "TITLE_KEYWORDS_RESET" = "恢復預設字串";
 "GEAR_MENU_ITEM" = "顯示在播放器設定選單";
 "GEAR_MENU_ITEM_DESCRIPTION" = "在齒輪選單中「畫質」、「播放速度」旁加入字幕動態島一列。與播放器按鈕獨立，可只用其中一個或兩個都用。";
+"AOD_UPDATE_FIXES" = "AOD 更新測試修正";
+"AOD_UPDATE_FIXES_DESCRIPTION" = "實驗功能：合併等待中的舊歌詞，減少重複的顯示更新。關閉可作為對照；每輪測試前請重新啟動 YouTube。";

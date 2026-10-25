@@ -177,11 +177,6 @@ static NSString *CIActivitySourceLabel(
     else if ([level isEqualToString:@"debug"]) logLevel = CILogLevelDebug;
     [CILogStore.sharedStore recordLevel:logLevel category:@"Activity" message:message];
 
-    if ([message hasPrefix:@"Live Activity did not accept revision"]) {
-        CILogProcessBackgroundEligibility(
-            @"A caption revision was refused"
-        );
-    }
 }
 
 @end

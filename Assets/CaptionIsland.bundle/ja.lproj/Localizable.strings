@@ -154,3 +154,5 @@
 "TITLE_KEYWORDS_RESET" = "既定の文字列に戻す";
 "GEAR_MENU_ITEM" = "プレーヤー設定メニューに表示";
 "GEAR_MENU_ITEM_DESCRIPTION" = "歯車メニューの「画質」「再生速度」の隣に Caption Island の項目を追加します。プレーヤーボタンとは独立しており、片方だけでも両方でも使えます。";
+"AOD_UPDATE_FIXES" = "AOD 更新のテスト修正";
+"AOD_UPDATE_FIXES_DESCRIPTION" = "実験機能：待機中の古い歌詞をまとめ、重複する表示更新を減らします。比較するにはオフにし、各テスト前に YouTube を再起動してください。";

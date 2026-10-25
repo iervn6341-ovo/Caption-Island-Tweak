@@ -31,6 +31,18 @@ static BOOL CILaunchPrefetchReleaseWasSuppressed;
 static BOOL CILaunchPrefetchRetentionProbeReleasing;
 static NSUInteger CILaunchPrefetchSuppressedReleaseCount;
 
+NSString *CILaunchPrefetchRetentionSummary(void) {
+    @synchronized (CIRetainedLaunchPrefetchAssertions) {
+        return [NSString stringWithFormat:
+            @"retention_enabled=%d hooks=%d direct_suppressed=%d retained_objects=%lu release_intercepts=%lu",
+            CILaunchPrefetchRetentionProbeEnabled,
+            CILaunchPrefetchRetentionProbeInstalled,
+            CILaunchPrefetchReleaseWasSuppressed,
+            (unsigned long)CIRetainedLaunchPrefetchAssertions.count,
+            (unsigned long)CILaunchPrefetchSuppressedReleaseCount];
+    }
+}
+
 static void CILoadRunningBoardServices(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{

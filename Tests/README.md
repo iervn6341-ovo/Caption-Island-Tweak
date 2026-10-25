@@ -18,6 +18,20 @@ swift test
 swift test --package-path Tests
 ```
 
+## Activity 更新佇列測試
+
+在 CaptionIsland repository 根目錄執行：
+
+```sh
+xcrun swiftc -parse-as-library -swift-version 5 \
+  CIActivityCommandPipeline.swift Tests/Swift/ActivityCommandPipelineSmoke.swift \
+  -o /tmp/caption-activity-pipeline
+/tmp/caption-activity-pipeline
+```
+
+以暫停的非同步呼叫模擬 ActivityKit 回應變慢，確認等待中的舊句合併、
+生命週期命令順序、FIFO 對照與後續排程。這不模擬系統背景資格或 AOD 繪製預算。
+
 ## 小尺寸 Live Activity 版面快照
 
 在 CaptionIsland repository 根目錄執行：

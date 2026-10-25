@@ -36,6 +36,7 @@ CaptionIsland_FILES = \
 	CICaptionCoordinator.m \
 	CIPlayerControlPanel.m \
 	CIActivityBridge.swift \
+	CIActivityCommandPipeline.swift \
 	Shared/CICaptionActivityAttributes.swift
 CaptionIsland_CFLAGS = -fobjc-arc
 CaptionIsland_FRAMEWORKS = UIKit Foundation QuartzCore ActivityKit MediaPlayer AVKit BackgroundTasks UniformTypeIdentifiers

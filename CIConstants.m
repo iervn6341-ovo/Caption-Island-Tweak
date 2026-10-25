@@ -9,6 +9,7 @@ NSString *const CIPreferredLanguageKey = @"CaptionIsland.PreferredLanguage";
 NSString *const CICaptionLanguagePrioritiesKey =
     @"CaptionIsland.CaptionLanguagePriorities.v1";
 NSString *const CIDebugLoggingKey = @"CaptionIsland.DebugLogging";
+NSString *const CIAODUpdateFixesKey = @"CaptionIsland.AODUpdateFixes";
 NSString *const CIDisableForShortsKey = @"CaptionIsland.DisableForShorts";
 NSString *const CIMaximumVideoDurationMinutesKey =
     @"CaptionIsland.MaximumVideoDurationMinutes";
@@ -216,4 +217,14 @@ void CIDebugLog(NSString *format, ...) {
     [CILogStore.sharedStore recordLevel:CILogLevelDebug
                                category:@"Pipeline"
                                 message:message ?: @""];
+}
+
+void CIAODLog(NSString *format, ...) {
+    if (!CIPreferenceBool(CIDebugLoggingKey, NO) || format.length == 0) return;
+    va_list arguments;
+    va_start(arguments, format);
+    NSString *event = [[NSString alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    [CILogStore.sharedStore recordLevel:CILogLevelDebug category:@"AODDiag"
+        format:@"[AODDiag] t=%.3f %@", NSProcessInfo.processInfo.systemUptime, event];
 }
