@@ -1,5 +1,12 @@
 # CaptionIsland
 
+With a compatible YTKACE build, settings are consolidated under **YTKACE → Caption Island**.
+The integrated page uses UIKit and shares its row definitions and preference actions
+with the standalone YouTube settings entry. Mode, caption-source and duration choices
+use YTKACE's shared system-menu presenter when available. The standalone entry remains
+available when the integration interface is absent. Preference keys and existing data
+are unchanged.
+
 CaptionIsland is a tweak that displays captions and lyrics for the video
 currently playing in YouTube.
 

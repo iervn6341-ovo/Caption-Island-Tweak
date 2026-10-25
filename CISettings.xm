@@ -10,6 +10,7 @@
 #import "CICaptionCoordinator.h"
 #import "CIBackgroundPlaybackMonitor.h"
 #import "CIConstants.h"
+#import "CISettingsUIKit.h"
 #import "CILanguagePriorityViewController.h"
 #import "CIGearMenuItem.h"
 #import "CIPlayerButton.h"
@@ -665,6 +666,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
 
 + (NSArray<NSNumber *> *)settingsCategoryOrder {
     NSArray<NSNumber *> *original = %orig;
+    if (CIUsesIntegratedSettings()) return original;
     if ([original containsObject:@(CaptionIslandSection)]) return original;
     NSMutableArray<NSNumber *> *order = original.mutableCopy;
     NSUInteger index = [order indexOfObject:@(1)];
@@ -678,6 +680,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
 
 - (NSArray<NSNumber *> *)orderedCategoriesForGroupType:(NSUInteger)type {
     NSArray<NSNumber *> *original = %orig;
+    if (CIUsesIntegratedSettings()) return original;
     if (type != YouGroupSettingsSection || [original containsObject:@(CaptionIslandSection)]) return original;
     NSMutableArray<NSNumber *> *categories = original.mutableCopy ?: [NSMutableArray array];
     [categories addObject:@(CaptionIslandSection)];
@@ -686,6 +689,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
 
 - (NSArray<NSNumber *> *)orderedCategories {
     NSArray<NSNumber *> *original = %orig;
+    if (CIUsesIntegratedSettings()) return original;
     if (self.type != 1 || class_getClassMethod(objc_getClass("YTSettingsGroupData"), @selector(tweaks)) ||
         [original containsObject:@(CaptionIslandSection)]) return original;
     NSMutableArray<NSNumber *> *categories = original.mutableCopy ?: [NSMutableArray array];
@@ -695,15 +699,10 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
 
 %end
 
-%hook YTSettingsSectionItemManager
-
-%new(v@:@)
-- (void)ci_updateCaptionIslandSectionWithEntry:(__unused id)entry {
-    YTSettingsViewController *settingsViewController = CISettingsControllerForManager(self);
-    if (!settingsViewController) return;
+static NSArray *CIBuildSettingsItems(YTSettingsViewController * __weak settingsViewController, Class itemClass) {
 
     NSMutableArray<YTSettingsSectionItem *> *items = [NSMutableArray array];
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         switchItemWithTitle:CILocalized(@"ENABLED", @"Enable Live Activity")
         titleDescription:CILocalized(@"ENABLED_DESCRIPTION", @"Show synchronized captions and lyrics in the system Dynamic Island and on the Lock Screen.")
         accessibilityIdentifier:@"CaptionIsland.Enabled"
@@ -717,7 +716,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
         @"LANGUAGE_PRIORITY",
         @"Caption language priority"
     );
-    YTSettingsSectionItem *language = [%c(YTSettingsSectionItem)
+    YTSettingsSectionItem *language = [itemClass
         itemWithTitle:languageTitle
         titleDescription:CILocalized(
             @"LANGUAGE_PRIORITY_DESCRIPTION",
@@ -745,7 +744,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
         @(CIReturnHomeModeYouPiP),
         @(CIReturnHomeModeCaptionIsland),
     ];
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:returnHomeModeTitle
         titleDescription:CILocalized(
             @"RETURN_HOME_MODE_DESCRIPTION",
@@ -765,7 +764,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             for (NSNumber *choice in returnHomeModeChoices) {
                 CIReturnHomeMode mode =
                     (CIReturnHomeMode)choice.integerValue;
-                [rows addObject:[%c(YTSettingsSectionItem)
+                [rows addObject:[itemClass
                     checkmarkItemWithTitle:CIReturnHomeModeTitle(mode)
                     selectBlock:^BOOL(
                         __unused YTSettingsCell *pickerCell,
@@ -782,15 +781,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             NSUInteger selected = [returnHomeModeChoices
                 indexOfObject:@(CICurrentReturnHomeMode())];
             if (selected == NSNotFound) selected = 0;
-            YTSettingsPickerViewController *picker =
-                [[%c(YTSettingsPickerViewController) alloc]
-                    initWithNavTitle:returnHomeModeTitle
-                    pickerSectionTitle:nil
-                    rows:rows
-                    selectedItemIndex:selected
-                    parentResponder:
-                        [settingsViewController parentResponder]];
-            [settingsViewController pushViewController:picker];
+            CIPresentSettingsChoices(settingsViewController, returnHomeModeTitle, rows, selected);
             return YES;
         }]];
 
@@ -800,7 +791,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
         @(CISourcePriorityLRCLIBFirst),
         @(CISourcePriorityYouTubeFirst),
     ];
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:sourcePriorityTitle
         titleDescription:CILocalized(
             @"SOURCE_PRIORITY_DESCRIPTION",
@@ -820,7 +811,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             for (NSNumber *choice in sourcePriorityChoices) {
                 CISourcePriorityMode mode =
                     (CISourcePriorityMode)choice.integerValue;
-                [rows addObject:[%c(YTSettingsSectionItem)
+                [rows addObject:[itemClass
                     checkmarkItemWithTitle:CISourcePriorityTitle(mode)
                     selectBlock:^BOOL(
                         __unused YTSettingsCell *pickerCell,
@@ -837,19 +828,11 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             NSUInteger selected = [sourcePriorityChoices
                 indexOfObject:@(CISourcePriority())];
             if (selected == NSNotFound) selected = 0;
-            YTSettingsPickerViewController *picker =
-                [[%c(YTSettingsPickerViewController) alloc]
-                    initWithNavTitle:sourcePriorityTitle
-                    pickerSectionTitle:nil
-                    rows:rows
-                    selectedItemIndex:selected
-                    parentResponder:
-                        [settingsViewController parentResponder]];
-            [settingsViewController pushViewController:picker];
+            CIPresentSettingsChoices(settingsViewController, sourcePriorityTitle, rows, selected);
             return YES;
         }]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         switchItemWithTitle:CILocalized(@"DISABLE_FOR_SHORTS", @"Disable for Shorts")
         titleDescription:CILocalized(@"DISABLE_FOR_SHORTS_DESCRIPTION", @"Do not start a Live Activity or search for lyrics while watching Shorts.")
         accessibilityIdentifier:@"CaptionIsland.DisableForShorts"
@@ -863,7 +846,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
         CILocalized(@"MAXIMUM_VIDEO_DURATION", @"Maximum video duration");
     NSArray<NSNumber *> *durationChoices =
         @[@1, @3, @5, @10, @15, @30, @60, @0];
-    YTSettingsSectionItem *durationLimit = [%c(YTSettingsSectionItem)
+    YTSettingsSectionItem *durationLimit = [itemClass
         itemWithTitle:durationLimitTitle
         titleDescription:CILocalized(@"MAXIMUM_VIDEO_DURATION_DESCRIPTION", @"Caption Island stays off when a video is longer than this limit.")
         accessibilityIdentifier:@"CaptionIsland.MaximumVideoDuration"
@@ -875,7 +858,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             NSMutableArray<YTSettingsSectionItem *> *rows =
                 [NSMutableArray arrayWithCapacity:durationChoices.count];
             for (NSNumber *choice in durationChoices) {
-                [rows addObject:[%c(YTSettingsSectionItem)
+                [rows addObject:[itemClass
                     checkmarkItemWithTitle:
                         CIDurationLimitTitle(choice.integerValue)
                     selectBlock:^BOOL(
@@ -893,21 +876,13 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             NSUInteger selected = [durationChoices indexOfObject:
                 @(CIMaximumVideoDurationMinutes())];
             if (selected == NSNotFound) selected = 2;
-            YTSettingsPickerViewController *picker =
-                [[%c(YTSettingsPickerViewController) alloc]
-                    initWithNavTitle:durationLimitTitle
-                    pickerSectionTitle:nil
-                    rows:rows
-                    selectedItemIndex:selected
-                    parentResponder:
-                        [settingsViewController parentResponder]];
-            [settingsViewController pushViewController:picker];
+            CIPresentSettingsChoices(settingsViewController, durationLimitTitle, rows, selected);
             return YES;
         }];
     [items addObject:durationLimit];
 
     // Visibility remains configurable; placement is fixed beside fullscreen.
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         switchItemWithTitle:CILocalized(
             @"PLAYER_BUTTON", @"Show button in the player")
         titleDescription:CILocalized(
@@ -921,7 +896,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         } settingItemId:0]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         switchItemWithTitle:CILocalized(
             @"GEAR_MENU_ITEM", @"Show in the player settings menu")
         titleDescription:CILocalized(
@@ -935,7 +910,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         } settingItemId:0]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:CILocalized(
             @"TITLE_KEYWORDS", @"Discarded title phrases")
         titleDescription:CILocalized(
@@ -964,7 +939,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         }]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         switchItemWithTitle:CILocalized(@"EXTERNAL_LYRICS", @"LRCLIB lyrics")
         titleDescription:CILocalized(@"EXTERNAL_LYRICS_DESCRIPTION", @"Allow synchronized or plain lyrics from LRCLIB in the selected source order.")
         accessibilityIdentifier:@"CaptionIsland.ExternalLyrics"
@@ -974,7 +949,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         } settingItemId:0]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:CILocalized(
             @"LRCLIB_BASE_URL",
             @"LRCLIB base URL"
@@ -995,7 +970,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         }]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:CILocalized(
             @"LRCLIB_CACHE",
             @"Saved lyrics"
@@ -1021,7 +996,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         }]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:CILocalized(
             @"VIDEO_OVERRIDE",
             @"Current video lyric settings"
@@ -1045,7 +1020,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         }]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:CILocalized(
             @"VIDEO_LANGUAGE_PRIORITY",
             @"Current video caption languages"
@@ -1072,7 +1047,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         }]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         switchItemWithTitle:CILocalized(@"DEBUG_LOGGING", @"Detailed logging")
         titleDescription:CILocalized(@"DEBUG_LOGGING_DESCRIPTION", @"Include detailed diagnostics. Lyrics, URLs, cookies, and authorization data are never recorded.")
         accessibilityIdentifier:@"CaptionIsland.Debug"
@@ -1082,7 +1057,7 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             return YES;
         } settingItemId:0]];
 
-    [items addObject:[%c(YTSettingsSectionItem)
+    [items addObject:[itemClass
         itemWithTitle:CILocalized(@"LOG_PREVIEW", @"Log Preview")
         titleDescription:CILocalized(@"LOG_PREVIEW_DESCRIPTION", @"Review, filter, share, or clear Caption Island diagnostics.")
         accessibilityIdentifier:@"CaptionIsland.LogPreview"
@@ -1095,6 +1070,27 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
             [settingsViewController pushViewController:controller];
             return YES;
         }]];
+
+    return items;
+}
+
+UIViewController *CIMakeSettingsViewController(void) {
+    CISettingsUIKitController *controller = [CISettingsUIKitController new];
+    controller.title = CILocalized(@"SETTINGS_TITLE", @"Caption Island");
+    __weak CISettingsUIKitController *weakController = controller;
+    controller.itemsProvider = ^NSArray *{
+        return CIBuildSettingsItems((YTSettingsViewController *)weakController, CISettingsItem.class);
+    };
+    return controller;
+}
+
+%hook YTSettingsSectionItemManager
+
+%new(v@:@)
+- (void)ci_updateCaptionIslandSectionWithEntry:(__unused id)entry {
+    YTSettingsViewController *settingsViewController = CISettingsControllerForManager(self);
+    if (!settingsViewController) return;
+    NSMutableArray<YTSettingsSectionItem *> *items = [CIBuildSettingsItems(settingsViewController, %c(YTSettingsSectionItem)) mutableCopy];
 
     if ([settingsViewController respondsToSelector:@selector(setSectionItems:forCategory:title:icon:titleDescription:headerHidden:)]) {
         YTIIcon *icon = [%c(YTIIcon) new];
