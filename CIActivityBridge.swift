@@ -57,9 +57,20 @@ public final class CIActivityBridge: NSObject {
     private static let metadataLogLock = NSLock()
     private static var didReportMissingSupportKey = false
     private static var didReportBundleIdentifierWarning = false
+    private static func installedBundleIdentifier(_ bundle: Bundle) -> String {
+        // YouTube compatibility hooks may spoof Bundle.main's in-process ID.
+        // Compare the installed plist identities when diagnosing the Widget.
+        let url = bundle.bundleURL.appendingPathComponent("Info.plist")
+        if let data = try? Data(contentsOf: url),
+           let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+           let identifier = info["CFBundleIdentifier"] as? String {
+            return identifier
+        }
+        return bundle.bundleIdentifier ?? "unknown"
+    }
     private static let installedWidgetBundleIdentifierWarning: String? = {
         let appBundle = Bundle.main
-        let appBundleID = appBundle.bundleIdentifier ?? "unknown"
+        let appBundleID = installedBundleIdentifier(appBundle)
         let widgetURL = (appBundle.builtInPlugInsURL ??
             appBundle.bundleURL.appendingPathComponent(
                 "PlugIns",
@@ -69,7 +80,7 @@ public final class CIActivityBridge: NSObject {
                 isDirectory: true
             )
         guard let widgetBundle = Bundle(url: widgetURL) else { return nil }
-        let widgetBundleID = widgetBundle.bundleIdentifier ?? "unknown"
+        let widgetBundleID = installedBundleIdentifier(widgetBundle)
         let expectedWidgetBundleID = "\(appBundleID).CaptionIslandWidget"
         guard widgetBundleID != expectedWidgetBundleID else { return nil }
         return "widget bundle ID is \(widgetBundleID), expected "
@@ -78,7 +89,7 @@ public final class CIActivityBridge: NSObject {
     }()
     private static let installedTargetMetadataIssue: String? = {
         let appBundle = Bundle.main
-        let appBundleID = appBundle.bundleIdentifier ?? "unknown"
+        let appBundleID = installedBundleIdentifier(appBundle)
         let appSupportValue = appBundle.object(
             forInfoDictionaryKey: "NSSupportsLiveActivities"
         )
@@ -100,7 +111,7 @@ public final class CIActivityBridge: NSObject {
             return "CaptionIslandWidget.appex is missing or has an unreadable Info.plist"
         }
 
-        let widgetBundleID = widgetBundle.bundleIdentifier ?? "unknown"
+        let widgetBundleID = installedBundleIdentifier(widgetBundle)
 
         let widgetSupportValue = widgetBundle.object(
             forInfoDictionaryKey: "NSSupportsLiveActivities"
