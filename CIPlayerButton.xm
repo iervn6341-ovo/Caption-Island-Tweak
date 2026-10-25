@@ -7,6 +7,8 @@
 // bottom slot; the hooks below provide its image, gray background and action,
 // with a defensive cleanup of legacy top copies.
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
+#import <math.h>
 
 #import "../YTVideoOverlay/Header.h"
 #import "../YTVideoOverlay/Init.x"
@@ -88,6 +90,77 @@ static UIImage *CIButtonImage(void) {
     return image;
 }
 
+static const void *CIPlayerButtonMaterial = &CIPlayerButtonMaterial;
+
+static UIVisualEffectView *CIButtonEffectInView(UIView *view, UIView *excluded, NSUInteger depth) {
+    if (!view || view == excluded || view.hidden || view.alpha < 0.05 || depth > 4) return nil;
+    if ([view isKindOfClass:UIVisualEffectView.class] && ((UIVisualEffectView *)view).effect) return (UIVisualEffectView *)view;
+    for (UIView *child in view.subviews) {
+        UIVisualEffectView *effect = CIButtonEffectInView(child, excluded, depth + 1);
+        if (effect) return effect;
+    }
+    return nil;
+}
+
+static UIView *CIPlayerFullscreenReference(YTInlinePlayerBarContainerView *bar) {
+    UIView *reference = [bar respondsToSelector:@selector(enterFullscreenButton)] ? [bar enterFullscreenButton] : nil;
+    if (!reference || reference.hidden || reference.alpha < 0.05)
+        reference = [bar respondsToSelector:@selector(exitFullscreenButton)] ? [bar exitFullscreenButton] : nil;
+    if ((!reference || reference.hidden || reference.alpha < 0.05) &&
+        [bar respondsToSelector:@selector(enterExitFullscreenButton)]) reference = [bar enterExitFullscreenButton];
+    if (!reference || reference.hidden) return nil;
+    for (NSUInteger depth = 0; depth < 3; ++depth) {
+        UIView *parent = reference.superview;
+        if (!parent || parent == bar || [NSStringFromClass(parent.class) containsString:@"Overlay"]) break;
+        CGSize size = parent.bounds.size;
+        CGRect child = [reference convertRect:reference.bounds toView:parent];
+        if (size.width < 28 || size.width > 64 || size.height < 28 || size.height > 64 ||
+            fabs(size.width - size.height) > 8 || fabs(CGRectGetMidX(child) - CGRectGetMidX(parent.bounds)) > 4 ||
+            fabs(CGRectGetMidY(child) - CGRectGetMidY(parent.bounds)) > 4) break;
+        reference = parent;
+    }
+    return reference;
+}
+
+static void CIStylePlayerButton(UIView *button, UIView *reference) {
+    UIVisualEffectView *owned = objc_getAssociatedObject(button, CIPlayerButtonMaterial);
+    UIVisualEffectView *native = CIButtonEffectInView(reference, nil, 0);
+    UIVisualEffectView *existing = CIButtonEffectInView(button, owned, 0);
+    if (native && !UIAccessibilityIsReduceTransparencyEnabled()) {
+        UIVisualEffectView *material = existing ?: owned;
+        if (!material) {
+            material = [[UIVisualEffectView alloc] initWithEffect:native.effect];
+            material.userInteractionEnabled = NO;
+            material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            objc_setAssociatedObject(button, CIPlayerButtonMaterial, material, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            owned = material;
+        }
+        if (material == owned && material.effect != native.effect) material.effect = native.effect;
+        if (material == owned) {
+            if (owned.superview != button) [button insertSubview:owned atIndex:0];
+            if (!CGRectEqualToRect(owned.frame, button.bounds)) owned.frame = button.bounds;
+        } else [owned removeFromSuperview];
+        button.backgroundColor = UIColor.clearColor;
+    } else {
+        [owned removeFromSuperview];
+        UIColor *background = reference.backgroundColor;
+        if ((!background || CGColorGetAlpha(background.CGColor) < 0.05) && reference.layer.backgroundColor)
+            background = [UIColor colorWithCGColor:reference.layer.backgroundColor];
+        if (!background || CGColorGetAlpha(background.CGColor) < 0.05)
+            background = [UIColor colorWithWhite:0.20 alpha:UIAccessibilityIsReduceTransparencyEnabled() ? 1.0 : 0.65];
+        button.backgroundColor = background;
+    }
+    CGFloat extent = MIN(CGRectGetWidth(button.bounds), CGRectGetHeight(button.bounds));
+    CGFloat referenceExtent = MIN(CGRectGetWidth(reference.bounds), CGRectGetHeight(reference.bounds));
+    CGFloat ratio = referenceExtent > 0 && reference.layer.cornerRadius > 0
+        ? MIN(0.5, reference.layer.cornerRadius / referenceExtent) : 0.5;
+    button.layer.cornerRadius = extent * ratio;
+    button.layer.cornerCurve = kCACornerCurveContinuous;
+    button.layer.borderColor = reference.layer.borderColor;
+    button.layer.borderWidth = MIN(1.0, reference.layer.borderWidth);
+    button.clipsToBounds = YES;
+}
+
 %group CaptionIslandButtonTop
 
 %hook YTMainAppControlsOverlayView
@@ -126,21 +199,7 @@ static UIImage *CIButtonImage(void) {
     %orig;
     UIView *button = self.overlayButtons[CIButtonTweakKey];
     if (button == nil) return;
-    UIView *reference = [self respondsToSelector:@selector(enterFullscreenButton)]
-        ? [self enterFullscreenButton] : nil;
-    if (reference == nil || reference.hidden) {
-        reference = [self respondsToSelector:@selector(exitFullscreenButton)]
-            ? [self exitFullscreenButton] : nil;
-    }
-    UIColor *background = reference.backgroundColor;
-    if (background == nil || CGColorGetAlpha(background.CGColor) < 0.05) {
-        background = [UIColor colorWithWhite:0.20 alpha:0.85];
-    }
-    button.backgroundColor = background;
-    CGFloat radius = reference.layer.cornerRadius;
-    button.layer.cornerRadius = radius > 0 ? radius
-        : MIN(CGRectGetWidth(button.bounds), CGRectGetHeight(button.bounds)) / 2.0;
-    button.clipsToBounds = YES;
+    CIStylePlayerButton(button, CIPlayerFullscreenReference(self));
 }
 
 - (UIImage *)buttonImage:(NSString *)tweakId {
