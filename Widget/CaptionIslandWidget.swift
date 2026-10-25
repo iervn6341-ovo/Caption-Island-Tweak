@@ -3,10 +3,25 @@ import SwiftUI
 import WidgetKit
 
 @main
-struct CaptionIslandWidgetBundle: WidgetBundle {
-    var body: some Widget {
-        CaptionIslandLiveActivity()
+struct CaptionIslandWidgetEntryPoint {
+    static func main() {
+        // WidgetConfiguration has no conditional result builder. Select the
+        // bundle before launch so iOS 17.5 never evaluates the iOS 18 modifier.
+        if #available(iOS 18.0, *) {
+            CaptionIslandSmallFamilyBundle.main()
+        } else {
+            CaptionIslandWidgetBundle.main()
+        }
     }
+}
+
+private struct CaptionIslandWidgetBundle: WidgetBundle {
+    var body: some Widget { CaptionIslandLiveActivity() }
+}
+
+@available(iOS 18.0, *)
+private struct CaptionIslandSmallFamilyBundle: WidgetBundle {
+    var body: some Widget { CaptionIslandSmallFamilyLiveActivity() }
 }
 
 private struct CaptionLyricStack: View {
@@ -103,7 +118,7 @@ private struct CaptionLyricStack: View {
 struct CaptionIslandLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CICaptionActivityAttributes.self) { context in
-            lockScreenView(context)
+            activityView(context)
                 .activityBackgroundTint(Color.black.opacity(0.92))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -186,6 +201,23 @@ struct CaptionIslandLiveActivity: Widget {
                     .accessibilityLabel(captionLabel())
             }
             .keylineTint(.white)
+        }
+    }
+
+    @ViewBuilder
+    private func activityView(
+        _ context: ActivityViewContext<CICaptionActivityAttributes>
+    ) -> some View {
+        if #available(iOS 18.0, *) {
+            CaptionActivityFamilyView(
+                currentLine: displayedLine(context),
+                nextLine: displayedNextLine(context),
+                regular: lockScreenView(context)
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityText(context))
+        } else {
+            lockScreenView(context)
         }
     }
 
@@ -353,5 +385,28 @@ struct CaptionIslandLiveActivity: Widget {
         if language.hasPrefix("zh") { return "字幕" }
         if language.hasPrefix("ja") { return "字幕" }
         return "Captions"
+    }
+}
+
+@available(iOS 18.0, *)
+private struct CaptionIslandSmallFamilyLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        CaptionIslandLiveActivity().body.supplementalActivityFamilies([.small, .medium])
+    }
+}
+
+@available(iOS 18.0, *)
+private struct CaptionActivityFamilyView<Regular: View>: View {
+    @Environment(\.activityFamily) private var family
+    let currentLine: String
+    let nextLine: String
+    let regular: Regular
+
+    var body: some View {
+        if family == .small {
+            CaptionSmallActivityView(currentLine: currentLine, nextLine: nextLine)
+        } else {
+            regular
+        }
     }
 }

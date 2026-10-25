@@ -18,6 +18,21 @@ swift test
 swift test --package-path Tests
 ```
 
+## 小尺寸 Live Activity 版面快照
+
+在 CaptionIsland repository 根目錄執行：
+
+```sh
+xcrun swiftc -parse-as-library -swift-version 5 \
+  Widget/CaptionSmallActivityView.swift Tests/WidgetSnapshots/RenderSmallActivity.swift \
+  -o /tmp/caption-layout-render
+/tmp/caption-layout-render /tmp/caption-small-snapshots
+```
+
+直接渲染正式使用的 SwiftUI view，提供日文、英文、阿拉伯文、沒有下一句、較大字級
+及不同卡片尺寸的 PNG。這是 macOS 渲染檢查，不是實際 CarPlay 系統截圖；字型、
+字級與宿主配置仍需由 iOS／車機確認。Actions 另外以 iOS SDK 型別檢查完整 Widget。
+
 ## 已覆蓋格式
 
 | 格式 | 已測行為 | 明確邊界 |
