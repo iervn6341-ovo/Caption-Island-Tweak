@@ -42,9 +42,11 @@ and update scheduling; this does not guarantee that arbitrary lyric lengths fit
 or that every cue appears immediately on every head unit. The phone Lock Screen
 and expanded Dynamic Island keep their existing layouts.
 
-The widget builds with the newest installed iOS SDK (18+ required), independently
-of the private-header SDK selected for the tweaks. Its deployment target remains
-iOS 17.5, which uses the original Activity configuration. Xcode 16+ is required.
+Both CaptionIsland.dylib and the widget compile and link against the iPhoneOS SDK
+shipped with the selected Xcode. Build/AppleSDK.mk overrides inherited TARGET,
+SYSROOT and ISYSROOT so the host's Swift bridge cannot accidentally import Swift
+overlays from a downloaded Theos SDK. The widget requires an iOS 18+ SDK (Xcode
+16+). Deployment remains iOS 17.5, which uses the original Activity configuration.
 
 ## Lyric sources
 

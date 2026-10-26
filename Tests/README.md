@@ -32,6 +32,12 @@ xcrun swiftc -parse-as-library -swift-version 5 \
 以暫停的非同步呼叫模擬 ActivityKit 回應變慢，確認等待中的舊句合併、
 生命週期命令順序、FIFO 對照與後續排程。這不模擬系統背景資格或 AOD 繪製預算。
 
+## Xcode SDK 選擇測試
+
+在 CaptionIsland repository 根目錄執行 `bash Tests/Build/AppleSDKSelectionSmoke.sh`。
+此測試刻意傳入舊的 TARGET、SYSROOT、ISYSROOT，確認正式 Makefile 共用設定仍會
+選擇目前 Xcode 的完整 SDK，並保留 iOS 17.5 部署版本。這不需要 Theos 或 IPA。
+
 ## 小尺寸 Live Activity 版面快照
 
 在 CaptionIsland repository 根目錄執行：
