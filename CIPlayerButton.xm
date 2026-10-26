@@ -76,7 +76,7 @@ static UIImage *CIButtonImage(void) {
     dispatch_once(&onceToken, ^{
         UIImageSymbolConfiguration *configuration =
             [UIImageSymbolConfiguration
-                configurationWithPointSize:OVERLAY_BUTTON_SIZE
+                configurationWithPointSize:26
                                     weight:UIImageSymbolWeightRegular];
         UIImage *symbol = [UIImage systemImageNamed:@"captions.bubble"
                                   withConfiguration:configuration];
@@ -91,6 +91,16 @@ static UIImage *CIButtonImage(void) {
 }
 
 static const void *CIPlayerButtonMaterial = &CIPlayerButtonMaterial;
+
+@interface CIPlayerCaptionButton : UIButton
+@end
+@implementation CIPlayerCaptionButton
+- (CGSize)intrinsicContentSize { return CGSizeMake(44, 44); }
+- (CGSize)sizeThatFits:(CGSize)size { (void)size; return CGSizeMake(44, 44); }
+- (CGRect)imageRectForContentRect:(CGRect)rect {
+    return CGRectMake(CGRectGetMidX(rect) - 13, CGRectGetMidY(rect) - 13, 26, 26);
+}
+@end
 
 static UIVisualEffectView *CIButtonEffectInView(UIView *view, UIView *excluded, NSUInteger depth) {
     if (!view || view == excluded || view.hidden || view.alpha < 0.05 || depth > 4) return nil;
@@ -126,39 +136,37 @@ static void CIStylePlayerButton(UIView *button, UIView *reference) {
     UIVisualEffectView *owned = objc_getAssociatedObject(button, CIPlayerButtonMaterial);
     UIVisualEffectView *native = CIButtonEffectInView(reference, nil, 0);
     UIVisualEffectView *existing = CIButtonEffectInView(button, owned, 0);
+    if (!owned) {
+        owned = [[UIVisualEffectView alloc] initWithEffect:nil];
+        owned.userInteractionEnabled = NO;
+        objc_setAssociatedObject(button, CIPlayerButtonMaterial, owned, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    existing.hidden = YES; // Do not paint the plugin's larger hit area as a second circle.
+    if (owned.superview != button) [button insertSubview:owned atIndex:0];
+    CGFloat visualExtent = native ? MIN(native.bounds.size.width, native.bounds.size.height) :
+        (reference.layer.cornerRadius > 0 ? reference.layer.cornerRadius * 2 : 36);
+    visualExtent = MIN(40, MAX(28, visualExtent));
+    owned.frame = CGRectMake(CGRectGetMidX(button.bounds) - visualExtent / 2,
+        CGRectGetMidY(button.bounds) - visualExtent / 2, visualExtent, visualExtent);
+    owned.layer.cornerRadius = visualExtent / 2;
+    owned.layer.cornerCurve = kCACornerCurveContinuous;
+    owned.clipsToBounds = YES;
     if (native && !UIAccessibilityIsReduceTransparencyEnabled()) {
-        UIVisualEffectView *material = existing ?: owned;
-        if (!material) {
-            material = [[UIVisualEffectView alloc] initWithEffect:native.effect];
-            material.userInteractionEnabled = NO;
-            material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            objc_setAssociatedObject(button, CIPlayerButtonMaterial, material, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            owned = material;
-        }
-        if (material == owned && material.effect != native.effect) material.effect = native.effect;
-        if (material == owned) {
-            if (owned.superview != button) [button insertSubview:owned atIndex:0];
-            if (!CGRectEqualToRect(owned.frame, button.bounds)) owned.frame = button.bounds;
-        } else [owned removeFromSuperview];
-        button.backgroundColor = UIColor.clearColor;
+        owned.effect = native.effect;
+        owned.backgroundColor = UIColor.clearColor;
     } else {
-        [owned removeFromSuperview];
+        owned.effect = nil;
         UIColor *background = reference.backgroundColor;
         if ((!background || CGColorGetAlpha(background.CGColor) < 0.05) && reference.layer.backgroundColor)
             background = [UIColor colorWithCGColor:reference.layer.backgroundColor];
         if (!background || CGColorGetAlpha(background.CGColor) < 0.05)
             background = [UIColor colorWithWhite:0.20 alpha:UIAccessibilityIsReduceTransparencyEnabled() ? 1.0 : 0.65];
-        button.backgroundColor = background;
+        owned.backgroundColor = background;
     }
-    CGFloat extent = MIN(CGRectGetWidth(button.bounds), CGRectGetHeight(button.bounds));
-    CGFloat referenceExtent = MIN(CGRectGetWidth(reference.bounds), CGRectGetHeight(reference.bounds));
-    CGFloat ratio = referenceExtent > 0 && reference.layer.cornerRadius > 0
-        ? MIN(0.5, reference.layer.cornerRadius / referenceExtent) : 0.5;
-    button.layer.cornerRadius = extent * ratio;
-    button.layer.cornerCurve = kCACornerCurveContinuous;
-    button.layer.borderColor = reference.layer.borderColor;
-    button.layer.borderWidth = MIN(1.0, reference.layer.borderWidth);
-    button.clipsToBounds = YES;
+    button.backgroundColor = UIColor.clearColor;
+    button.layer.borderWidth = 0;
+    button.layer.cornerRadius = 0;
+    button.clipsToBounds = NO;
 }
 
 %group CaptionIslandButtonTop
@@ -228,6 +236,17 @@ void CIInstallPlayerButton(void) {
         CIPlayerButtonPositionKey(): @(CIPlayerButtonPositionBottom),
     }];
     initYTVideoOverlay(CIButtonTweakKey, @{
+        @"providesBackground": @YES,
+        @"buttonFactory": [^UIButton *(UIView *host, BOOL top) {
+            (void)top;
+            UIButton *button = [CIPlayerCaptionButton buttonWithType:UIButtonTypeCustom];
+            button.frame = CGRectMake(0, 0, 44, 44);
+            [button setImage:CIButtonImage() forState:UIControlStateNormal];
+            button.accessibilityIdentifier = @"YTVideoOverlay-CaptionIslandLyrics";
+            [button addTarget:host action:NSSelectorFromString(@"didPressCaptionIsland:")
+                forControlEvents:UIControlEventTouchUpInside];
+            return button;
+        } copy],
         AccessibilityLabelKey: CILocalized(@"PANEL_TITLE", @"Caption Island"),
         SelectorKey: @"didPressCaptionIsland:",
         @"fixedPosition": @(CIPlayerButtonPositionBottom),

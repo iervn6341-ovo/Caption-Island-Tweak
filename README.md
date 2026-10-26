@@ -10,6 +10,15 @@ are unchanged.
 CaptionIsland is a tweak that displays captions and lyrics for the video
 currently playing in YouTube.
 
+## Player button
+
+The KACE-Youtube YTVideoOverlay adapter uses a public UIKit button with a 44pt
+touch target and a centered 26pt caption glyph. Its material circle is separate
+from the touch area: it follows the fullscreen control within 28–40pt, with a
+36pt fallback. This avoids YouTube's private icon padding and the previous
+oversized background. The button remains fixed at the bottom; visibility lives
+in CaptionIsland settings. Older YTVideoOverlay builds retain the legacy factory.
+
 ## CarPlay and small Live Activities
 
 On iOS 18 and later, the extension opts into the small Activity family used by
