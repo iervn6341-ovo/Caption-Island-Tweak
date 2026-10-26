@@ -45,6 +45,13 @@ overlays from a downloaded Theos SDK. The widget requires an iOS 18+ SDK (Xcode
 
 ## Lyric sources
 
+Saved LRCLIB lyrics can be exported as `CaptionIsland-Lyrics.plist` and imported
+from **Caption Island → Saved lyrics → Import**. Import copies the selected file
+and accepts generic provider types as well as property lists; the existing lyric
+schema, size and content checks decide whether its contents can be imported.
+The original selected file is not edited. This lyric archive is separate from
+YTKACE's JSON settings transfer.
+
 - **YouTube captions:** the video's available CC and ASR caption tracks.
 - **LRCLIB:** synchronized LRC lyrics or plain-text lyrics returned by the
   [LRCLIB API](https://lrclib.net/).

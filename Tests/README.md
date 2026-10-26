@@ -67,7 +67,14 @@ xcrun swiftc -parse-as-library -swift-version 5 \
 
 ## LRCLIB provider smoke test
 
-`ObjC/LRCLIBProviderSmoke.m` 會直接連結正式的 `CILRCLIBProvider.m`，以虛構搜尋結果驗證：
+`ObjC/LRCLIBProviderSmoke.m` 會直接連結正式的 `CILRCLIBProvider.m`，以虛構搜尋結果驗證。
+
+在 repository 根目錄執行 `bash Tests/Build/LRCLIBProviderSmoke.sh`；編譯與執行資料
+放在獨立暫存目錄。也會測試實際匯出的 binary plist 清空快取後可重新匯入、保留同步
+歌詞文字／時間、排除查無結果紀錄、唯讀 XML plist、失去副檔名資訊的分享檔案，以及
+拒絕非歌詞 plist 時不覆蓋既有歌詞。這些驗證不代表各家 Files provider 的實機 UI。
+
+其他驗證項目：
 
 - 時長相近時優先選擇有效 `syncedLyrics`；
 - 有可信歌手時建立單一 `/api/get` 精確查詢，沒有可信歌手時才使用 `/api/search`；
@@ -85,7 +92,7 @@ xcrun swiftc -parse-as-library -swift-version 5 \
 - LRC 空 timestamp 會正確形成間奏空檔；
 - instrumental、低可信候選與錯誤 JSON root 都會安全拒絕。
 
-測試不會呼叫網路或寫入歌詞快取。
+測試不連線外部服務，使用離線回應與獨立的暫存歌詞快取。
 
 YouTube inspector smoke test 也會驗證字幕 URL 依序採用原始簽名 URL、JSON3、
 WebVTT fallback，阻止自動翻譯 `tlang` URL 進入下載流程，並確認一般直式影片不會

@@ -702,6 +702,49 @@ int main(void) {
         CIAssert([negativeProvider cachedResultForKey:negativeKey
             negativeHit:&negativeHit] == nil && negativeHit,
             @"a recent no-result lookup should suppress repeated network searches");
+
+        error = nil;
+        NSURL *exportURL = [CILRCLIBProvider exportCacheWithError:&error];
+        NSData *exportData = exportURL ? [NSData dataWithContentsOfURL:exportURL] : nil;
+        CIAssert(exportURL && error == nil && [exportURL.pathExtension isEqualToString:@"plist"] &&
+            exportData.length > 8 && memcmp(exportData.bytes,"bplist00",8) == 0,
+            @"lyric export must produce an actual binary plist, not just a plist filename");
+        [CILRCLIBProvider clearPersistentCache];
+        CIAssert([CILRCLIBProvider importCacheFromURL:exportURL error:&error] == 1 && error == nil,
+            @"a freshly exported plist must import after the original cache is removed");
+        CILRCLIBResult *roundTripped = [[CILRCLIBProvider new] cachedResultForKey:persistentKey negativeHit:NULL];
+        CIAssert(roundTripped.recordID == 90 && roundTripped.syncedCues.count == 2 &&
+            [roundTripped.syncedCues.firstObject.text isEqualToString:@"Exact first"] &&
+            [CILRCLIBProvider cacheSummary].missCount == 0,
+            @"export/import must retain lyric timing/text and exclude cached misses");
+
+        id exportRoot = [NSPropertyListSerialization propertyListWithData:exportData options:0 format:NULL error:&error];
+        NSData *XMLData = [NSPropertyListSerialization dataWithPropertyList:exportRoot
+            format:NSPropertyListXMLFormat_v1_0 options:0 error:&error];
+        NSURL *XMLURL = [exportURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Read-only lyrics.plist"];
+        CIAssert([XMLData writeToURL:XMLURL options:NSDataWritingAtomic error:&error] &&
+            [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0444} ofItemAtPath:XMLURL.path error:&error],
+            @"prepare a read-only XML plist fixture");
+        [CILRCLIBProvider clearPersistentCache];
+        CIAssert([CILRCLIBProvider importCacheFromURL:XMLURL error:&error] == 1 && error == nil,
+            @"lyric imports must read read-only XML plists without modifying the source");
+        CIAssert([[NSData dataWithContentsOfURL:XMLURL] isEqualToData:XMLData],
+            @"import must leave the selected source file unchanged");
+
+        NSURL *untypedURL = [exportURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Shared lyrics.backup"];
+        CIAssert([exportData writeToURL:untypedURL options:NSDataWritingAtomic error:&error],@"prepare an untyped shared file");
+        [CILRCLIBProvider clearPersistentCache];
+        CIAssert([CILRCLIBProvider importCacheFromURL:untypedURL error:&error] == 1 && error == nil,
+            @"valid lyric data must not depend on the file provider's extension/type metadata");
+        NSURL *invalidURL = [exportURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Unrelated.plist"];
+        NSData *invalidData = [NSPropertyListSerialization dataWithPropertyList:@{@"unrelated":@YES}
+            format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];
+        CIAssert([invalidData writeToURL:invalidURL options:NSDataWritingAtomic error:&error],@"prepare an unrelated plist");
+        error = nil;
+        CIAssert([CILRCLIBProvider importCacheFromURL:invalidURL error:&error] == 0 && error.code == -35 &&
+            [CILRCLIBProvider cacheSummary].lyricCount == 1,
+            @"a broad picker must still reject unrelated plists without replacing existing lyrics");
+        [NSFileManager.defaultManager removeItemAtURL:exportURL.URLByDeletingLastPathComponent error:nil];
         [CILRCLIBProvider clearPersistentCache];
 
         error = nil;

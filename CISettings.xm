@@ -175,8 +175,8 @@ static const void *CILRCLIBCacheImporterKey = &CILRCLIBCacheImporterKey;
         [self finish];
         return;
     }
-    // A picked file lives outside the sandbox, so the read has to happen inside
-    // a coordinated security-scoped access.
+    // Import-as-copy normally supplies a local URL. Keep scoped access for any
+    // provider URL that still needs it while the importer reads the contents.
     BOOL scoped = [URL startAccessingSecurityScopedResource];
     NSError *error = nil;
     NSUInteger imported =
@@ -218,17 +218,18 @@ static void CIPresentLRCLIBCacheImport(
         OBJC_ASSOCIATION_RETAIN_NONATOMIC
     );
 
-    // Exports are binary property lists. Accept generic data too, since a file
-    // that has travelled through AirDrop or another app can lose its type.
-    UTType *propertyList =
-        [UTType typeWithIdentifier:@"com.apple.property-list"];
-    NSArray<UTType *> *types = propertyList
-        ? @[propertyList, UTTypeData] : @[UTTypeData];
+    // Import a local copy rather than requiring the provider to open its file
+    // in place. Providers can assign an unknown/non-data type to a shared plist,
+    // so allow generic items too; importCacheFromURL validates the actual plist
+    // schema, size and lyrics before anything is stored.
+    NSArray<UTType *> *types =
+        @[UTTypePropertyList, UTTypeData, UTTypeItem];
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
-            initForOpeningContentTypes:types];
+            initForOpeningContentTypes:types asCopy:YES];
     picker.delegate = importer;
     picker.allowsMultipleSelection = NO;
+    picker.shouldShowFileExtensions = YES;
     [settingsViewController presentViewController:picker
                                         animated:YES
                                       completion:nil];
