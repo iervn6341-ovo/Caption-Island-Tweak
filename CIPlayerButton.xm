@@ -76,8 +76,8 @@ static UIImage *CIButtonImage(void) {
     dispatch_once(&onceToken, ^{
         UIImageSymbolConfiguration *configuration =
             [UIImageSymbolConfiguration
-                configurationWithPointSize:26
-                                    weight:UIImageSymbolWeightRegular];
+                configurationWithPointSize:28
+                                    weight:UIImageSymbolWeightSemibold];
         UIImage *symbol = [UIImage systemImageNamed:@"captions.bubble"
                                   withConfiguration:configuration];
         if (!symbol) {
@@ -98,7 +98,22 @@ static const void *CIPlayerButtonMaterial = &CIPlayerButtonMaterial;
 - (CGSize)intrinsicContentSize { return CGSizeMake(44, 44); }
 - (CGSize)sizeThatFits:(CGSize)size { (void)size; return CGSizeMake(44, 44); }
 - (CGRect)imageRectForContentRect:(CGRect)rect {
-    return CGRectMake(CGRectGetMidX(rect) - 13, CGRectGetMidY(rect) - 13, 26, 26);
+    return CGRectMake(CGRectGetMidX(rect) - 14, CGRectGetMidY(rect) - 14, 28, 28);
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    // Keep the white glyph above the sampled material. The button's parent
+    // still controls the normal native fade-in/fade-out of the whole control.
+    self.imageView.alpha = 1;
+    self.imageView.layer.zPosition = 1;
+    self.imageView.layer.shadowColor = UIColor.blackColor.CGColor;
+    self.imageView.layer.shadowOpacity = 0.65;
+    self.imageView.layer.shadowRadius = 1;
+    self.imageView.layer.shadowOffset = CGSizeZero;
+}
+- (void)setHighlighted:(BOOL)highlighted {
+    [super setHighlighted:highlighted];
+    self.imageView.alpha = 1;
 }
 @end
 
@@ -146,16 +161,18 @@ static void CIStylePlayerButton(UIView *button, UIView *reference) {
     CGFloat visualExtent = native ? MIN(native.bounds.size.width, native.bounds.size.height) :
         (reference.layer.cornerRadius > 0 ? reference.layer.cornerRadius * 2 : 36);
     visualExtent = MIN(40, MAX(28, visualExtent));
-    owned.frame = CGRectMake(CGRectGetMidX(button.bounds) - visualExtent / 2,
+    CGRect materialFrame = CGRectMake(CGRectGetMidX(button.bounds) - visualExtent / 2,
         CGRectGetMidY(button.bounds) - visualExtent / 2, visualExtent, visualExtent);
-    owned.layer.cornerRadius = visualExtent / 2;
+    if (!CGRectEqualToRect(owned.frame, materialFrame)) owned.frame = materialFrame;
+    if (owned.layer.cornerRadius != visualExtent / 2) owned.layer.cornerRadius = visualExtent / 2;
     owned.layer.cornerCurve = kCACornerCurveContinuous;
     owned.clipsToBounds = YES;
+    owned.layer.zPosition = -1;
     if (native && !UIAccessibilityIsReduceTransparencyEnabled()) {
-        owned.effect = native.effect;
+        if (owned.effect != native.effect) owned.effect = native.effect;
         owned.backgroundColor = UIColor.clearColor;
     } else {
-        owned.effect = nil;
+        if (owned.effect) owned.effect = nil;
         UIColor *background = reference.backgroundColor;
         if ((!background || CGColorGetAlpha(background.CGColor) < 0.05) && reference.layer.backgroundColor)
             background = [UIColor colorWithCGColor:reference.layer.backgroundColor];
@@ -241,6 +258,12 @@ void CIInstallPlayerButton(void) {
             (void)top;
             UIButton *button = [CIPlayerCaptionButton buttonWithType:UIButtonTypeCustom];
             button.frame = CGRectMake(0, 0, 44, 44);
+            button.tintColor = UIColor.whiteColor;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            button.adjustsImageWhenHighlighted = NO;
+            button.adjustsImageWhenDisabled = NO;
+#pragma clang diagnostic pop
             [button setImage:CIButtonImage() forState:UIControlStateNormal];
             button.accessibilityIdentifier = @"YTVideoOverlay-CaptionIslandLyrics";
             [button addTarget:host action:NSSelectorFromString(@"didPressCaptionIsland:")

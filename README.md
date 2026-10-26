@@ -13,10 +13,12 @@ currently playing in YouTube.
 ## Player button
 
 The KACE-Youtube YTVideoOverlay adapter uses a public UIKit button with a 44pt
-touch target and a centered 26pt caption glyph. Its material circle is separate
+touch target and a centered 28pt semibold white caption glyph. Its material circle is separate
 from the touch area: it follows the fullscreen control within 28–40pt, with a
 36pt fallback. This avoids YouTube's private icon padding and the previous
-oversized background. The button remains fixed at the bottom; visibility lives
+oversized background. The image sits above the sampled material at full local
+opacity with a subtle contrast shadow; native whole-control fading remains intact.
+The button remains fixed at the bottom; visibility lives
 in CaptionIsland settings. Older YTVideoOverlay builds retain the legacy factory.
 
 ## CarPlay and small Live Activities
