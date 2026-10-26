@@ -18,6 +18,12 @@ swift test
 swift test --package-path Tests
 ```
 
+## Xcode SDK 選擇測試
+
+在 CaptionIsland repository 根目錄執行 `bash Tests/Build/AppleSDKSelectionSmoke.sh`。
+此測試刻意傳入舊的 TARGET、SYSROOT、ISYSROOT，確認正式 Makefile 共用設定仍會
+選擇目前 Xcode 的完整 SDK，並保留 iOS 17.5 部署版本。這不需要 Theos 或 IPA。
+
 ## 小尺寸 Live Activity 版面快照
 
 在 CaptionIsland repository 根目錄執行：

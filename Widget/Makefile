@@ -1,8 +1,4 @@
-# The widget uses public ActivityFamily APIs introduced in the iOS 18 SDK.
-# Use the newest installed SDK independently of the tweaks' private-header SDK;
-# runtime availability checks retain the host's iOS 17.5 deployment target.
-CAPTION_ISLAND_WIDGET_SDK_VERSION ?= latest
-override TARGET := iphone:clang:$(CAPTION_ISLAND_WIDGET_SDK_VERSION):17.5
+include ../Build/AppleSDK.mk
 ARCHS = arm64
 THEOS_OBJ_DIR_NAME = obj/CaptionIslandWidget
 
