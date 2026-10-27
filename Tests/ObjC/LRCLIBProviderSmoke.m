@@ -42,6 +42,7 @@
                                    response:(NSHTTPURLResponse *)response;
 - (NSTimeInterval)cooldownRemainingForEndpoint:(NSString *)endpoint;
 - (void)clearCooldownForEndpoint:(NSString *)endpoint;
+- (NSTimeInterval)retryAfterSecondsFromResponse:(NSHTTPURLResponse *)response;
 @end
 
 static NSData *CIJSONData(id object) {
@@ -93,6 +94,10 @@ static NSURL *CIStubLastRequestURL;
 static NSData *CIStubResponseData;
 static NSData *CIStubTrackNameResponseData;
 static NSMutableArray<NSURL *> *CIStubRequestURLs;
+static NSArray<NSNumber *> *CIStubStatuses;
+static NSDictionary<NSString *, NSString *> *CIStubHeaders;
+static NSMutableArray<NSNumber *> *CIStubRequestTimes;
+static dispatch_semaphore_t CIStubRequestReceived;
 
 @interface CILRCLIBStubURLProtocol : NSURLProtocol
 @end
@@ -109,10 +114,17 @@ static NSMutableArray<NSURL *> *CIStubRequestURLs;
 
 - (void)startLoading {
     NSData *data;
+    NSInteger status = 200;
+    NSDictionary *headers;
     @synchronized (CILRCLIBStubURLProtocol.class) {
         CIStubLastRequestURL = self.request.URL;
         if (!CIStubRequestURLs) CIStubRequestURLs = [NSMutableArray array];
         [CIStubRequestURLs addObject:self.request.URL];
+        [CIStubRequestTimes addObject:@(NSProcessInfo.processInfo.systemUptime)];
+        NSUInteger index = CIStubRequestURLs.count - 1;
+        if (index < CIStubStatuses.count) status = CIStubStatuses[index].integerValue;
+        headers = CIStubHeaders ?: @{@"Content-Type": @"application/json"};
+        if (CIStubRequestReceived) dispatch_semaphore_signal(CIStubRequestReceived);
         NSURLComponents *components = [NSURLComponents
             componentsWithURL:self.request.URL resolvingAgainstBaseURL:NO];
         BOOL usesTrackName = NO;
@@ -128,9 +140,9 @@ static NSMutableArray<NSURL *> *CIStubRequestURLs;
     }
     NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc]
         initWithURL:self.request.URL
-        statusCode:200
+        statusCode:status
         HTTPVersion:@"HTTP/1.1"
-        headerFields:@{@"Content-Type": @"application/json"}];
+        headerFields:headers];
     [self.client URLProtocol:self didReceiveResponse:response
         cacheStoragePolicy:NSURLCacheStorageNotAllowed];
     [self.client URLProtocol:self didLoadData:data];
@@ -609,6 +621,70 @@ int main(void) {
                 isEqualToString:@"Structured Fallback Song"],
             @"an empty q= response must retry the same title with track_name= exactly once");
         [CILRCLIBProvider clearPersistentCache];
+        // Real provider/session paths, with a bounded offline 503 sequence.
+        for (NSUInteger scenario = 0; scenario < 4; scenario++) {
+            @synchronized (CILRCLIBStubURLProtocol.class) {
+                CIStubResponseData = CIJSONData(@[fallbackRecord]);
+                CIStubTrackNameResponseData = nil;
+                CIStubRequestURLs = [NSMutableArray array];
+                CIStubRequestTimes = [NSMutableArray array];
+                CIStubStatuses = scenario == 0 ? @[@503,@200] : @[@503,@503,@503,@200];
+                CIStubHeaders = @{@"Content-Type":@"application/json",@"Retry-After":scenario == 3 ? @"120" : @"1"};
+                CIStubRequestReceived = dispatch_semaphore_create(0);
+            }
+            CILRCLIBProvider *retryProvider = [CILRCLIBProvider new];
+            [retryProvider setValue:[NSURLSession sessionWithConfiguration:stubConfiguration] forKey:@"session"];
+            dispatch_semaphore_t done = dispatch_semaphore_create(0);
+            __block NSError *failure;
+            __block NSUInteger completions = 0;
+            __block CILRCLIBResult *recovered;
+            NSArray *queries = @[[CISongQuery queryWithTitle:@"Structured Fallback Song"
+                artist:@"" origin:@"service-retry"]];
+            if (scenario == 0) {
+                [retryProvider fetchLyricsForCandidates:queries duration:147 completion:^(CILRCLIBResult *result, NSError *error) {
+                    recovered = result; failure = error; completions++; dispatch_semaphore_signal(done);
+                }];
+            } else {
+                [retryProvider fetchAllMatchesForCandidates:queries duration:147 completion:^(NSArray *matches, NSError *error) {
+                    (void)matches; failure = error; completions++; dispatch_semaphore_signal(done);
+                }];
+            }
+            if (scenario == 2) {
+                CIAssert(dispatch_semaphore_wait(CIStubRequestReceived,
+                    dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)) == 0, @"cancel test must receive its initial request");
+                [retryProvider cancel];
+                CIAssert(dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)) != 0,
+                    @"cancelled retry must not complete later");
+            } else {
+                CIAssert(dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC)) == 0,
+                    @"503 handling must complete within a bounded delay");
+            }
+            @synchronized (CILRCLIBStubURLProtocol.class) {
+                if (scenario == 0) {
+                    CIAssert(recovered.recordID == 19094340 && !failure && completions == 1 && CIStubRequestURLs.count == 2,
+                        @"one 503 must recover on the same query and complete exactly once");
+                    CIAssert([CIStubRequestURLs[0] isEqual:CIStubRequestURLs[1]] &&
+                        CIStubRequestTimes[1].doubleValue - CIStubRequestTimes[0].doubleValue >= 1.9,
+                        @"service retry must retain the query and normal request spacing");
+                } else if (scenario == 1) {
+                    CIAssert(failure.code == 503 && completions == 1 && CIStubRequestURLs.count == 3,
+                        @"persistent 503 must stop after two retries");
+                } else {
+                    CIAssert(CIStubRequestURLs.count == 1 && (scenario == 2 ? completions == 0 : failure.code == 503),
+                        @"cancel or a long Retry-After must not send another request");
+                }
+                CIStubStatuses = nil; CIStubHeaders = nil; CIStubRequestReceived = nil; CIStubRequestTimes = nil;
+            }
+            [CILRCLIBProvider clearPersistentCache];
+        }
+        NSDateFormatter *HTTPDate = [NSDateFormatter new];
+        HTTPDate.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+        HTTPDate.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];
+        HTTPDate.dateFormat = @"EEE, dd MMM yyyy HH:mm:ss zzz";
+        NSHTTPURLResponse *dated = [[NSHTTPURLResponse alloc] initWithURL:[NSURL URLWithString:@"https://lrclib.net"]
+            statusCode:503 HTTPVersion:@"HTTP/1.1" headerFields:@{@"Retry-After":[HTTPDate stringFromDate:[NSDate dateWithTimeIntervalSinceNow:60]]}];
+        NSTimeInterval dateDelay = [provider retryAfterSecondsFromResponse:dated];
+        CIAssert(dateDelay > 58 && dateDelay <= 60, @"Retry-After must accept HTTP dates as well as seconds");
         NSURLComponents *exactComponents = [NSURLComponents componentsWithURL:
             [provider getURLForTitle:@"Never Looking Back"
                 artist:@"Example Artist" duration:251.6]

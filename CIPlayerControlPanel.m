@@ -76,7 +76,8 @@ static UIViewController *CIPanelPresenter(UIViewController *hint) {
 @property (nonatomic, copy, nullable) NSString *activeBrowseTitle;
 @property (nonatomic) BOOL browsing;
 @property (nonatomic, copy, nullable) NSString *browseMessage;
-- (void)presentBrowseMenu;
+- (UIButton *)browseButtonWithTitle:(NSString *)title;
+- (UIMenu *)browseMenu;
 - (void)presentCustomBrowsePrompt;
 - (void)beginBrowseWithReadings:(NSArray<CISongQuery *> *)readings;
 @end
@@ -237,7 +238,7 @@ static UIViewController *CIPanelPresenter(UIViewController *hint) {
         ? [UIColor.labelColor colorWithAlphaComponent:0.16]
         : [UIColor.labelColor colorWithAlphaComponent:0.07];
     [button setTitleColor:UIColor.labelColor forState:UIControlStateNormal];
-    [button addTarget:self action:action
+    if (action) [button addTarget:self action:action
         forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
@@ -433,9 +434,8 @@ static UIViewController *CIPanelPresenter(UIViewController *hint) {
         hint.textColor = UIColor.tertiaryLabelColor;
         hint.numberOfLines = 0;
         [self.lyricSection addArrangedSubview:hint];
-        [self.lyricSection addArrangedSubview:[self pillButtonWithTitle:
-            CILocalized(@"PANEL_LYRICS_SEARCH", @"Search all results")
-            action:@selector(presentBrowseMenu) tag:0 selected:NO]];
+        [self.lyricSection addArrangedSubview:[self browseButtonWithTitle:
+            CILocalized(@"PANEL_LYRICS_SEARCH", @"Search all results")]];
         [self.lyricSection addArrangedSubview:[self pillButtonWithTitle:
             CILocalized(@"PANEL_LYRICS_SUPPRESS", @"Show no lyrics for this video")
             action:@selector(suppressLyrics) tag:0 selected:NO]];
@@ -467,9 +467,8 @@ static UIViewController *CIPanelPresenter(UIViewController *hint) {
             index++;
         }
     }
-    [self.lyricSection addArrangedSubview:[self pillButtonWithTitle:
-        CILocalized(@"PANEL_LYRICS_SEARCH_AGAIN", @"Search another title")
-        action:@selector(presentBrowseMenu) tag:0 selected:NO]];
+    [self.lyricSection addArrangedSubview:[self browseButtonWithTitle:
+        CILocalized(@"PANEL_LYRICS_SEARCH_AGAIN", @"Search another title")]];
     [self.lyricSection addArrangedSubview:[self pillButtonWithTitle:
         CILocalized(@"PANEL_LYRICS_SUPPRESS", @"Show no lyrics for this video")
         action:@selector(suppressLyrics) tag:0 selected:NO]];
@@ -516,60 +515,36 @@ static UIViewController *CIPanelPresenter(UIViewController *hint) {
     return label;
 }
 
-- (void)presentBrowseMenu {
-    NSArray<CISongQuery *> *readings = self.readings;
-    if (readings.count == 0) return;
-    UIAlertController *menu = [UIAlertController
-        alertControllerWithTitle:CILocalized(
-            @"PANEL_LYRICS_CHOOSE_QUERY",
-            @"Choose a song title to search"
-        )
-        message:CILocalized(
-            @"PANEL_LYRICS_CHOOSE_QUERY_HINT",
-            @"Only the selected interpretation is searched."
-        )
-        preferredStyle:UIAlertControllerStyleActionSheet];
+- (UIButton *)browseButtonWithTitle:(NSString *)title {
+    UIButton *button = [self pillButtonWithTitle:title
+        action:NULL tag:0 selected:NO];
+    button.menu = [self browseMenu];
+    button.showsMenuAsPrimaryAction = YES;
+    return button;
+}
+
+- (UIMenu *)browseMenu {
+    NSMutableArray<UIMenuElement *> *items = [NSMutableArray array];
     __weak typeof(self) weakSelf = self;
-    for (CISongQuery *reading in readings) {
-        [menu addAction:[UIAlertAction
-            actionWithTitle:[self browseMenuTitleForReading:reading]
-            style:UIAlertActionStyleDefault
-            handler:^(__unused UIAlertAction *action) {
-                // The dash in the menu is presentation only. Preserve the artist
-                // as structured metadata so manual q= search can send
-                // `title artist` with a plain space and, if that finds nothing,
-                // retry the same pair in reverse order.
-                CISongQuery *selected = [CISongQuery
-                    queryWithTitle:reading.title
-                             artist:reading.artist
-                             origin:reading.origin];
+    for (CISongQuery *reading in self.readings) {
+        [items addObject:[UIAction actionWithTitle:[self browseMenuTitleForReading:reading]
+            image:nil identifier:nil handler:^(__unused UIAction *action) {
+                CISongQuery *selected = [CISongQuery queryWithTitle:reading.title
+                    artist:reading.artist origin:reading.origin];
                 [weakSelf beginBrowseWithReadings:@[selected]];
             }]];
     }
-    [menu addAction:[UIAlertAction
-        actionWithTitle:CILocalized(
-            @"PANEL_LYRICS_CUSTOM_QUERY", @"Enter a song title…")
-        style:UIAlertActionStyleDefault
-        handler:^(__unused UIAlertAction *action) {
-            // Let the action sheet finish its automatic dismissal before the
-            // text-entry alert is presented by the same controller.
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                (int64_t)(0.25 * NSEC_PER_SEC)),
-                dispatch_get_main_queue(), ^{
+    [items addObject:[UIAction actionWithTitle:CILocalized(
+        @"PANEL_LYRICS_CUSTOM_QUERY", @"Enter a song title…")
+        image:[UIImage systemImageNamed:@"magnifyingglass"] identifier:nil
+        handler:^(__unused UIAction *action) {
+            dispatch_async(dispatch_get_main_queue(), ^{
                 [weakSelf presentCustomBrowsePrompt];
             });
         }]];
-    [menu addAction:[UIAlertAction
-        actionWithTitle:CILocalized(@"CANCEL", @"Cancel")
-        style:UIAlertActionStyleCancel handler:nil]];
-    UIPopoverPresentationController *popover = menu.popoverPresentationController;
-    if (popover) {
-        popover.sourceView = self.view;
-        popover.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds),
-            CGRectGetMaxY(self.view.bounds) - 1, 1, 1);
-        popover.permittedArrowDirections = 0;
-    }
-    [self presentViewController:menu animated:YES completion:nil];
+    // UIKit owns the button-anchored material, opening animation and dismissal.
+    return [UIMenu menuWithTitle:CILocalized(@"PANEL_LYRICS_CHOOSE_QUERY",
+        @"Choose a song title to search") children:items];
 }
 
 - (void)presentCustomBrowsePrompt {

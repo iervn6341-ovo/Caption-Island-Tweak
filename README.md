@@ -45,6 +45,17 @@ overlays from a downloaded Theos SDK. The widget requires an iOS 18+ SDK (Xcode
 
 ## Lyric sources
 
+The player panel's “Search all results” and “Search another title” buttons use
+UIKit pull-down menus, including the system's material and opening/dismissal
+animation. The selected query preserves the original artist metadata.
+
+LRCLIB HTTP 503 responses retry the same request at most twice per lookup,
+respecting `Retry-After` (seconds or HTTP date), normal request spacing and
+cancellation. Delays above 15 seconds end the lookup without an automatic retry.
+Service errors never become cached “no lyrics” results; existing matches are
+kept when a later title reading fails. Persistent server overload can still
+require trying again later.
+
 Saved LRCLIB lyrics can be exported as `CaptionIsland-Lyrics.plist` and imported
 from **Caption Island → Saved lyrics → Import**. Import copies the selected file
 and accepts generic provider types as well as property lists; the existing lyric

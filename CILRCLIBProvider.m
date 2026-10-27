@@ -20,6 +20,8 @@ static const NSUInteger CILRCLIBMaximumPlainLines = 1000;
 static const NSUInteger CILRCLIBMaximumLyricLineCharacters = 2048;
 static const NSTimeInterval CILRCLIBMinimumRequestInterval = 2.0;
 static const NSTimeInterval CILRCLIBMinimumCompletionInterval = 1.0;
+static const NSUInteger CILRCLIBMaximumServiceRetries = 2;
+static const NSTimeInterval CILRCLIBMaximumServiceRetryDelay = 15.0;
 // Lyrics never expire: an entry is removed only when the user deletes it, or
 // when the cache exceeds its size limits and the least recently stored entries
 // are evicted. Stored as expiresAt = 0, and any positive-kind entry written by
@@ -428,6 +430,8 @@ static NSArray<CICaptionCue *> *CILRCLIBUsableCues(NSString *syncedLyrics,
 @property (nonatomic) NSTimeInterval duration;
 /// Guards against a superseded lookup writing back its result.
 @property (nonatomic) NSUInteger token;
+// Shared across all title readings so an unavailable service cannot multiply requests.
+@property (nonatomic) NSUInteger serviceRetries;
 /// Where a result or a miss is recorded. Derived from the first reading, so an
 /// entry written by an earlier build stays addressable.
 @property (nonatomic, copy) NSString *cacheKey;
@@ -1111,10 +1115,18 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
 - (NSTimeInterval)retryAfterSecondsFromResponse:
     (NSHTTPURLResponse *)response {
     NSString *value = [response valueForHTTPHeaderField:@"Retry-After"];
-    double seconds = [value respondsToSelector:@selector(doubleValue)]
-        ? value.doubleValue : 0;
-    return isfinite(seconds) && seconds > 0
-        ? seconds : CILRCLIBDefaultRateLimitCooldown;
+    NSString *trimmed = [value stringByTrimmingCharactersInSet:
+        NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSScanner *scanner = [NSScanner scannerWithString:trimmed ?: @""];
+    double seconds;
+    if ([scanner scanDouble:&seconds] && scanner.isAtEnd &&
+        isfinite(seconds) && seconds >= 0) return seconds;
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];
+    formatter.dateFormat = @"EEE, dd MMM yyyy HH:mm:ss zzz";
+    NSDate *date = [formatter dateFromString:trimmed ?: @""];
+    return date ? MAX(0, date.timeIntervalSinceNow) : -1;
 }
 
 - (NSTimeInterval)recordCooldownForEndpoint:(NSString *)endpoint
@@ -1134,7 +1146,7 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
             CILRCLIBMaximumBlockCooldown,
             CILRCLIBDefaultRateLimitCooldown *
                 pow(2.0, MIN(5, strikes - 1)));
-        seconds = MAX(serverDelay, protectiveDelay);
+        seconds = MAX(MAX(0, serverDelay), protectiveDelay);
     } else {
         seconds = MIN(
             CILRCLIBMaximumBlockCooldown,
@@ -1925,6 +1937,31 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
         if (networkError) {
             if (networkError.code != NSURLErrorCancelled) {
                 [self abortLookupWithContext:context error:networkError];
+            }
+            return;
+        }
+        if (status == 503) {
+            NSTimeInterval serverDelay = [self retryAfterSecondsFromResponse:HTTPResponse];
+            NSTimeInterval delay = MAX(serverDelay, pow(2.0, context.serviceRetries));
+            BOOL retry = context.serviceRetries < CILRCLIBMaximumServiceRetries &&
+                delay <= CILRCLIBMaximumServiceRetryDelay;
+            [CILogStore.sharedStore recordLevel:CILogLevelWarning category:@"LRCLIB"
+                format:@"HTTP 503 from %@; Retry-After=%@; retry %lu/%lu %@ (delay %.1fs).",
+                URL.host, [HTTPResponse valueForHTTPHeaderField:@"Retry-After"] ?: @"absent",
+                (unsigned long)(context.serviceRetries + (retry ? 1 : 0)),
+                (unsigned long)CILRCLIBMaximumServiceRetries,
+                retry ? @"scheduled" : @"stopped", delay];
+            if (retry) {
+                context.serviceRetries++;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                    (int64_t)(delay * NSEC_PER_SEC)),
+                    dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    // startLookup checks the token again and preserves normal spacing.
+                    [self startLookupWithContext:context attempt:attempt];
+                });
+            } else {
+                [self abortLookupWithContext:context error:CILRCLIBError(503,
+                    @"LRCLIB is temporarily unavailable. Please try again later.")];
             }
             return;
         }
