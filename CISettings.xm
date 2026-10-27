@@ -700,10 +700,8 @@ static YTSettingsViewController *CISettingsControllerForManager(id manager) {
 
 %end
 
-static NSArray *CIBuildSettingsItems(YTSettingsViewController * __weak settingsViewController, Class itemClass) {
-
-    NSMutableArray<YTSettingsSectionItem *> *items = [NSMutableArray array];
-    [items addObject:[itemClass
+static id CIBuildEnabledSettingsItem(Class itemClass) {
+    return [itemClass
         switchItemWithTitle:CILocalized(@"ENABLED", @"Enable Live Activity")
         titleDescription:CILocalized(@"ENABLED_DESCRIPTION", @"Show synchronized captions and lyrics in the system Dynamic Island and on the Lock Screen.")
         accessibilityIdentifier:@"CaptionIsland.Enabled"
@@ -711,7 +709,13 @@ static NSArray *CIBuildSettingsItems(YTSettingsViewController * __weak settingsV
         switchBlock:^BOOL(__unused YTSettingsCell *cell, BOOL enabled) {
             CIStoreBool(CIEnabledKey, enabled);
             return YES;
-        } settingItemId:0]];
+        } settingItemId:0];
+}
+
+static NSArray *CIBuildSettingsItems(YTSettingsViewController * __weak settingsViewController, Class itemClass) {
+
+    NSMutableArray<YTSettingsSectionItem *> *items = [NSMutableArray array];
+    [items addObject:CIBuildEnabledSettingsItem(itemClass)];
 
     NSString *languageTitle = CILocalized(
         @"LANGUAGE_PRIORITY",
@@ -1075,12 +1079,35 @@ static NSArray *CIBuildSettingsItems(YTSettingsViewController * __weak settingsV
     return items;
 }
 
+static NSArray *CIBuildSettingsRoot(YTSettingsViewController * __weak settingsViewController, Class itemClass) {
+    NSMutableArray *rows = [NSMutableArray array];
+    [rows addObject:CIBuildEnabledSettingsItem(itemClass)];
+    for (NSDictionary *group in CISettingsGroups()) {
+        [rows addObject:[itemClass itemWithTitle:group[@"title"]
+            titleDescription:group[@"summary"]
+            accessibilityIdentifier:[@"CaptionIsland.Group." stringByAppendingString:group[@"id"]]
+            detailTextBlock:nil
+            selectBlock:^BOOL(__unused YTSettingsCell *cell, __unused NSUInteger index) {
+                CISettingsUIKitController *page = [CISettingsUIKitController new];
+                page.title = group[@"title"];
+                __weak CISettingsUIKitController *weakPage = page;
+                page.itemsProvider = ^NSArray *{
+                    return CISettingsItemsInGroup(CIBuildSettingsItems(
+                        (YTSettingsViewController *)weakPage,CISettingsItem.class),group[@"id"]);
+                };
+                [settingsViewController pushViewController:page];
+                return YES;
+            }]];
+    }
+    return rows.copy;
+}
+
 UIViewController *CIMakeSettingsViewController(void) {
     CISettingsUIKitController *controller = [CISettingsUIKitController new];
     controller.title = CILocalized(@"SETTINGS_TITLE", @"Caption Island");
     __weak CISettingsUIKitController *weakController = controller;
     controller.itemsProvider = ^NSArray *{
-        return CIBuildSettingsItems((YTSettingsViewController *)weakController, CISettingsItem.class);
+        return CIBuildSettingsRoot((YTSettingsViewController *)weakController, CISettingsItem.class);
     };
     return controller;
 }
@@ -1091,7 +1118,7 @@ UIViewController *CIMakeSettingsViewController(void) {
 - (void)ci_updateCaptionIslandSectionWithEntry:(__unused id)entry {
     YTSettingsViewController *settingsViewController = CISettingsControllerForManager(self);
     if (!settingsViewController) return;
-    NSMutableArray<YTSettingsSectionItem *> *items = [CIBuildSettingsItems(settingsViewController, %c(YTSettingsSectionItem)) mutableCopy];
+    NSMutableArray<YTSettingsSectionItem *> *items = [CIBuildSettingsRoot(settingsViewController, %c(YTSettingsSectionItem)) mutableCopy];
 
     if ([settingsViewController respondsToSelector:@selector(setSectionItems:forCategory:title:icon:titleDescription:headerHidden:)]) {
         YTIIcon *icon = [%c(YTIIcon) new];

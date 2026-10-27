@@ -21,6 +21,7 @@ static const NSUInteger CILRCLIBMaximumLyricLineCharacters = 2048;
 static const NSTimeInterval CILRCLIBMinimumRequestInterval = 2.0;
 static const NSTimeInterval CILRCLIBMinimumCompletionInterval = 1.0;
 static const NSUInteger CILRCLIBMaximumServiceRetries = 2;
+static const NSTimeInterval CILRCLIBServiceRetryDelay = 3.0;
 static const NSTimeInterval CILRCLIBMaximumServiceRetryDelay = 15.0;
 // Lyrics never expire: an entry is removed only when the user deletes it, or
 // when the cache exceeds its size limits and the least recently stored entries
@@ -432,6 +433,7 @@ static NSArray<CICaptionCue *> *CILRCLIBUsableCues(NSString *syncedLyrics,
 @property (nonatomic) NSUInteger token;
 // Shared across all title readings so an unavailable service cannot multiply requests.
 @property (nonatomic) NSUInteger serviceRetries;
+@property (nonatomic) BOOL awaitingServiceRecovery;
 /// Where a result or a miss is recorded. Derived from the first reading, so an
 /// entry written by an earlier build stays addressable.
 @property (nonatomic, copy) NSString *cacheKey;
@@ -1095,6 +1097,26 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
         };
         [self writePersistentCacheLocked];
     }
+}
+
+// Record structured server diagnostics, never the full payload (which can
+// contain lyrics). An HTTP status alone does not reveal the backend's cause.
+- (NSString *)serviceFailureReasonFromData:(NSData *)data {
+    id root = data.length <= CILRCLIBMaximumResponseBytes
+        ? [NSJSONSerialization JSONObjectWithData:data ?: [NSData data] options:0 error:nil] : nil;
+    if (![root isKindOfClass:NSDictionary.class])
+        return @"server did not provide a structured error reason";
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSString *key in @[@"name", @"message"]) {
+        id value = root[key];
+        if (![value isKindOfClass:NSString.class] || ![value length]) continue;
+        NSString *line = [[value componentsSeparatedByCharactersInSet:
+            NSCharacterSet.controlCharacterSet] componentsJoinedByString:@" "];
+        if (line.length > 240) line = [[line substringToIndex:240] stringByAppendingString:@"…"];
+        [parts addObject:[NSString stringWithFormat:@"%@=%@",key,line]];
+    }
+    return parts.count ? [parts componentsJoinedByString:@"; "]
+        : @"server did not provide an error name or message";
 }
 
 - (NSMutableDictionary *)cooldowns {
@@ -1942,17 +1964,26 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
         }
         if (status == 503) {
             NSTimeInterval serverDelay = [self retryAfterSecondsFromResponse:HTTPResponse];
-            NSTimeInterval delay = MAX(serverDelay, pow(2.0, context.serviceRetries));
+            NSTimeInterval delay = MAX(serverDelay, CILRCLIBServiceRetryDelay);
             BOOL retry = context.serviceRetries < CILRCLIBMaximumServiceRetries &&
                 delay <= CILRCLIBMaximumServiceRetryDelay;
+            NSString *stopReason = retry ? @"none" :
+                (context.serviceRetries >= CILRCLIBMaximumServiceRetries
+                    ? @"retry-limit-reached" : @"server-delay-exceeds-15s-budget");
+            NSString *requestID = [HTTPResponse valueForHTTPHeaderField:@"X-Request-ID"]
+                ?: [HTTPResponse valueForHTTPHeaderField:@"CF-Ray"] ?: @"absent";
+            if (requestID.length > 128) requestID = [requestID substringToIndex:128];
             [CILogStore.sharedStore recordLevel:CILogLevelWarning category:@"LRCLIB"
-                format:@"HTTP 503 from %@; Retry-After=%@; retry %lu/%lu %@ (delay %.1fs).",
-                URL.host, [HTTPResponse valueForHTTPHeaderField:@"Retry-After"] ?: @"absent",
+                format:@"HTTP 503 from %@; reason={%@}; contentType=%@; responseBytes=%lu; requestID=%@; Retry-After=%@; retry %lu/%lu %@ (delay %.1fs); stopReason=%@.",
+                URL.host, [self serviceFailureReasonFromData:data], HTTPResponse.MIMEType ?: @"unknown",
+                (unsigned long)data.length, requestID,
+                [HTTPResponse valueForHTTPHeaderField:@"Retry-After"] ?: @"absent",
                 (unsigned long)(context.serviceRetries + (retry ? 1 : 0)),
                 (unsigned long)CILRCLIBMaximumServiceRetries,
-                retry ? @"scheduled" : @"stopped", delay];
+                retry ? @"scheduled" : @"stopped", delay, stopReason];
             if (retry) {
                 context.serviceRetries++;
+                context.awaitingServiceRecovery = YES;
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                     (int64_t)(delay * NSEC_PER_SEC)),
                     dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
@@ -1964,6 +1995,12 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
                     @"LRCLIB is temporarily unavailable. Please try again later.")];
             }
             return;
+        }
+        if (status >= 200 && status < 300 && context.awaitingServiceRecovery) {
+            context.awaitingServiceRecovery = NO;
+            [CILogStore.sharedStore recordLevel:CILogLevelInfo category:@"LRCLIB"
+                format:@"HTTP 503 recovery succeeded: HTTP %ld after %lu retry request(s).",
+                (long)status, (unsigned long)context.serviceRetries];
         }
         if ((status >= 200 && status < 300) || status == 404) {
             [self clearCooldownForEndpoint:serviceIdentity];

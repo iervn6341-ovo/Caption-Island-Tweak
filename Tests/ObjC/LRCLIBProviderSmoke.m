@@ -3,6 +3,7 @@
 #import "../../CILRCLIBProvider.h"
 #import "../../CITextUtilities.h"
 #import "../../CIConstants.h"
+#import "../../CILogStore.h"
 
 @interface CILRCLIBProvider (SmokeTesting)
 - (CILRCLIBResult *)lyricsResultFromSearchData:(NSData *)data
@@ -43,6 +44,7 @@
 - (NSTimeInterval)cooldownRemainingForEndpoint:(NSString *)endpoint;
 - (void)clearCooldownForEndpoint:(NSString *)endpoint;
 - (NSTimeInterval)retryAfterSecondsFromResponse:(NSHTTPURLResponse *)response;
+- (NSString *)serviceFailureReasonFromData:(NSData *)data;
 @end
 
 static NSData *CIJSONData(id object) {
@@ -138,6 +140,8 @@ static dispatch_semaphore_t CIStubRequestReceived;
             ? CIStubTrackNameResponseData : CIStubResponseData;
         data = data ?: [@"[]" dataUsingEncoding:NSUTF8StringEncoding];
     }
+    if (status == 503) data = CIJSONData(@{@"name":@"ServiceUnavailable",
+        @"message":@"The server is busy, please retry in a moment", @"syncedLyrics":@"PRIVATE LYRIC CONTENT"});
     NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc]
         initWithURL:self.request.URL
         statusCode:status
@@ -664,11 +668,13 @@ int main(void) {
                     CIAssert(recovered.recordID == 19094340 && !failure && completions == 1 && CIStubRequestURLs.count == 2,
                         @"one 503 must recover on the same query and complete exactly once");
                     CIAssert([CIStubRequestURLs[0] isEqual:CIStubRequestURLs[1]] &&
-                        CIStubRequestTimes[1].doubleValue - CIStubRequestTimes[0].doubleValue >= 1.9,
-                        @"service retry must retain the query and normal request spacing");
+                        CIStubRequestTimes[1].doubleValue - CIStubRequestTimes[0].doubleValue >= 2.9,
+                        @"service retry must retain the query and wait at least three seconds");
                 } else if (scenario == 1) {
                     CIAssert(failure.code == 503 && completions == 1 && CIStubRequestURLs.count == 3,
                         @"persistent 503 must stop after two retries");
+                    CIAssert(CIStubRequestTimes[2].doubleValue - CIStubRequestTimes[1].doubleValue >= 2.9,
+                        @"the second retry must also wait at least three seconds");
                 } else {
                     CIAssert(CIStubRequestURLs.count == 1 && (scenario == 2 ? completions == 0 : failure.code == 503),
                         @"cancel or a long Retry-After must not send another request");
@@ -677,6 +683,18 @@ int main(void) {
             }
             [CILRCLIBProvider clearPersistentCache];
         }
+        NSString *serverReason = [provider serviceFailureReasonFromData:CIJSONData(@{
+            @"name":@"ServiceUnavailable", @"message":@"The server is busy, please retry in a moment",
+            @"syncedLyrics":@"PRIVATE LYRIC CONTENT"})];
+        CIAssert([serverReason containsString:@"ServiceUnavailable"] && [serverReason containsString:@"server is busy"] &&
+            ![serverReason containsString:@"PRIVATE LYRIC"], @"503 diagnostics must extract the server reason without dumping the lyric payload");
+        CIAssert([[provider serviceFailureReasonFromData:[@"<html>503</html>" dataUsingEncoding:NSUTF8StringEncoding]]
+            containsString:@"did not provide"], @"an opaque error page must not be assigned an invented root cause");
+        NSString *logs = [[CILogStore.sharedStore snapshot] componentsJoinedByString:@"\n"];
+        CIAssert([logs containsString:@"delay 3.0s"] && [logs containsString:@"stopReason=retry-limit-reached"] &&
+            [logs containsString:@"stopReason=server-delay-exceeds-15s-budget"] && [logs containsString:@"HTTP 503 recovery succeeded"] && [logs containsString:@"reason={name=ServiceUnavailable; message=The server is busy"] &&
+            ![logs containsString:@"PRIVATE LYRIC CONTENT"],
+            @"503 diagnostics must include retry timing, stop reasons and successful recovery");
         NSDateFormatter *HTTPDate = [NSDateFormatter new];
         HTTPDate.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
         HTTPDate.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];

@@ -1,6 +1,10 @@
 # CaptionIsland
 
 With a compatible YTKACE build, settings are consolidated under **YTKACE → Caption Island**.
+The settings home retains the Live Activity switch and opens five category pages:
+Playback, Captions and lyrics, Appearance and controls, Current video, and
+Diagnostics and logs. Each category uses the same settings and preference keys;
+both the integrated and standalone entry points use this hierarchy.
 The integrated page uses UIKit and shares its row definitions and preference actions
 with the standalone YouTube settings entry. Mode, caption-source and duration choices
 use YTKACE's shared system-menu presenter when available. The standalone entry remains
@@ -50,14 +54,18 @@ UIKit pull-down menus, including the system's material and opening/dismissal
 animation. The selected query preserves the original artist metadata.
 
 LRCLIB HTTP 503 responses retry the same request at most twice per lookup,
-respecting `Retry-After` (seconds or HTTP date), normal request spacing and
+waiting at least 3 seconds before each retry, respecting longer `Retry-After`
+values (seconds or HTTP date), normal request spacing and
 cancellation. Delays above 15 seconds end the lookup without an automatic retry.
 Service errors never become cached “no lyrics” results; existing matches are
 kept when a later title reading fails. Persistent server overload can still
-require trying again later.
+require trying again later. Diagnostics include the server's structured error
+name/message when available, response type/size, request ID, Retry-After,
+retry delay/count, stop reason, and successful recovery. Missing server details
+are reported explicitly; the client does not infer a backend failure cause.
 
 Saved LRCLIB lyrics can be exported as `CaptionIsland-Lyrics.plist` and imported
-from **Caption Island → Saved lyrics → Import**. Import copies the selected file
+from **Caption Island → Captions and lyrics → Saved lyrics → Import**. Import copies the selected file
 and accepts generic provider types as well as property lists; the existing lyric
 schema, size and content checks decide whether its contents can be imported.
 The original selected file is not edited. This lyric archive is separate from

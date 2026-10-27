@@ -111,6 +111,44 @@
 }
 @end
 
+NSArray<NSDictionary *> *CISettingsGroups(void) {
+    return @[
+        @{@"id":@"Playback", @"title":CILocalized(@"GROUP_PLAYBACK", @"Playback"),
+          @"summary":CILocalized(@"GROUP_PLAYBACK_DESCRIPTION", @"Home Screen behavior, Shorts and video duration limits."),
+          @"items":@[@"CaptionIsland.ReturnHomeMode", @"CaptionIsland.DisableForShorts", @"CaptionIsland.MaximumVideoDuration"]},
+        @{@"id":@"Captions", @"title":CILocalized(@"GROUP_CAPTIONS", @"Captions and lyrics"),
+          @"summary":CILocalized(@"GROUP_CAPTIONS_DESCRIPTION", @"Languages, source priority, LRCLIB and saved lyrics."),
+          @"items":@[@"CaptionIsland.Language", @"CaptionIsland.SourcePriority", @"CaptionIsland.ExternalLyrics",
+                     @"CaptionIsland.LRCLIBBaseURL", @"CaptionIsland.TitleKeywords", @"CaptionIsland.LRCLIBCache"]},
+        @{@"id":@"Appearance", @"title":CILocalized(@"GROUP_APPEARANCE", @"Appearance and controls"),
+          @"summary":CILocalized(@"GROUP_APPEARANCE_DESCRIPTION", @"Player button and settings-menu entry visibility."),
+          @"items":@[@"CaptionIsland.PlayerButton", @"CaptionIsland.GearMenuItem"]},
+        @{@"id":@"CurrentVideo", @"title":CILocalized(@"GROUP_CURRENT_VIDEO", @"Current video"),
+          @"summary":CILocalized(@"GROUP_CURRENT_VIDEO_DESCRIPTION", @"Per-video lyrics, timing and caption languages."),
+          @"items":@[@"CaptionIsland.VideoOverride", @"CaptionIsland.VideoLanguagePriority"]},
+        @{@"id":@"Diagnostics", @"title":CILocalized(@"GROUP_DIAGNOSTICS", @"Diagnostics and logs"),
+          @"summary":CILocalized(@"GROUP_DIAGNOSTICS_DESCRIPTION", @"Detailed logging, preview and sharing."),
+          @"items":@[@"CaptionIsland.Debug", @"CaptionIsland.LogPreview"]},
+    ];
+}
+
+NSArray *CISettingsItemsInGroup(NSArray *items, NSString *groupID) {
+    NSArray *identifiers = nil;
+    for (NSDictionary *group in CISettingsGroups()) {
+        if ([group[@"id"] isEqual:groupID]) { identifiers = group[@"items"]; break; }
+    }
+    NSMutableDictionary *byIdentifier = [NSMutableDictionary dictionary];
+    for (id item in items) {
+        NSString *identifier = [item accessibilityIdentifier];
+        if (identifier.length) byIdentifier[identifier] = item;
+    }
+    NSMutableArray *result = [NSMutableArray array];
+    for (NSString *identifier in identifiers) {
+        if (byIdentifier[identifier]) [result addObject:byIdentifier[identifier]];
+    }
+    return result.copy;
+}
+
 BOOL CIUsesIntegratedSettings(void) {
     typedef BOOL (*Integration)(void);
     Integration integration = (Integration)dlsym(RTLD_DEFAULT, "YTKACEIntegratesCaptionIslandSettings");

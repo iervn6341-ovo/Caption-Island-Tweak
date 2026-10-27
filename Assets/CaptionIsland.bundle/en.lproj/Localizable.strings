@@ -154,3 +154,15 @@
 "TITLE_KEYWORDS_RESET" = "Restore default phrases";
 "GEAR_MENU_ITEM" = "Show in the player settings menu";
 "GEAR_MENU_ITEM_DESCRIPTION" = "Adds a Caption Island row to the gear menu beside Quality and Playback speed. Independent of the player button, so either or both can be used.";
+
+// Settings categories
+"GROUP_PLAYBACK" = "Playback";
+"GROUP_PLAYBACK_DESCRIPTION" = "Home Screen behavior, Shorts and video duration limits.";
+"GROUP_CAPTIONS" = "Captions and lyrics";
+"GROUP_CAPTIONS_DESCRIPTION" = "Languages, source priority, LRCLIB and saved lyrics.";
+"GROUP_APPEARANCE" = "Appearance and controls";
+"GROUP_APPEARANCE_DESCRIPTION" = "Player button and settings-menu entry visibility.";
+"GROUP_CURRENT_VIDEO" = "Current video";
+"GROUP_CURRENT_VIDEO_DESCRIPTION" = "Per-video lyrics, timing and caption languages.";
+"GROUP_DIAGNOSTICS" = "Diagnostics and logs";
+"GROUP_DIAGNOSTICS_DESCRIPTION" = "Detailed logging, preview and sharing.";

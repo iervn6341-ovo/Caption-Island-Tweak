@@ -25,6 +25,9 @@
 - (void)pushViewController:(UIViewController *)controller;
 @end
 
+// Stable identifiers keep grouping independent from localization and row order.
+FOUNDATION_EXPORT NSArray<NSDictionary *> *CISettingsGroups(void);
+FOUNDATION_EXPORT NSArray *CISettingsItemsInGroup(NSArray *items, NSString *groupID);
 FOUNDATION_EXPORT BOOL CIUsesIntegratedSettings(void);
 FOUNDATION_EXPORT void CIPresentSettingsChoices(UIViewController *controller, NSString *title,
                                                  NSArray *rows, NSUInteger selectedIndex);

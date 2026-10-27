@@ -154,3 +154,15 @@
 "TITLE_KEYWORDS_RESET" = "恢復預設字串";
 "GEAR_MENU_ITEM" = "顯示在播放器設定選單";
 "GEAR_MENU_ITEM_DESCRIPTION" = "在齒輪選單中「畫質」、「播放速度」旁加入字幕動態島一列。與播放器按鈕獨立，可只用其中一個或兩個都用。";
+
+// Settings categories
+"GROUP_PLAYBACK" = "播放行為";
+"GROUP_PLAYBACK_DESCRIPTION" = "返回主畫面模式、Shorts 與影片最長時間。";
+"GROUP_CAPTIONS" = "字幕與歌詞";
+"GROUP_CAPTIONS_DESCRIPTION" = "語言順序、來源優先順序、LRCLIB 與已儲存歌詞。";
+"GROUP_APPEARANCE" = "外觀與入口";
+"GROUP_APPEARANCE_DESCRIPTION" = "播放器按鈕與齒輪選單入口的顯示設定。";
+"GROUP_CURRENT_VIDEO" = "目前影片";
+"GROUP_CURRENT_VIDEO_DESCRIPTION" = "個別影片的歌詞、時間校正與字幕語言。";
+"GROUP_DIAGNOSTICS" = "診斷與日誌";
+"GROUP_DIAGNOSTICS_DESCRIPTION" = "詳細記錄、Log 預覽與分享。";
