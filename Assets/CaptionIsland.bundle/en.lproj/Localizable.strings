@@ -166,3 +166,5 @@
 "GROUP_CURRENT_VIDEO_DESCRIPTION" = "Per-video lyrics, timing and caption languages.";
 "GROUP_DIAGNOSTICS" = "Diagnostics and logs";
 "GROUP_DIAGNOSTICS_DESCRIPTION" = "Detailed logging, preview and sharing.";
+
+"LOG_RETENTION_HINT" = "Preview: latest 500 entries. Export includes archives. Files: On My iPhone → app folder → CaptionIsland → Logs.";

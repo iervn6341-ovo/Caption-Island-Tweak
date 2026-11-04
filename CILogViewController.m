@@ -154,19 +154,27 @@
     self.statusLabel.text = [NSString stringWithFormat:
         CILocalized(@"LOG_COUNT_FORMAT", @"%lu entries · lyrics, URLs, cookies, and authorization data are not recorded"),
         (unsigned long)all.count];
+    self.statusLabel.text = [self.statusLabel.text stringByAppendingFormat:@"\n%@",
+        CILocalized(@"LOG_RETENTION_HINT", @"Preview: latest 500 entries. Export includes archives. Files: On My iPhone → app folder → CaptionIsland → Logs.")];
     if (wasAtBottom && self.textView.text.length > 0) {
         [self.textView scrollRangeToVisible:NSMakeRange(self.textView.text.length - 1, 1)];
     }
 }
 
 - (void)shareLogs {
-    NSString *logs = CILogStore.sharedStore.exportText;
-    if (logs.length == 0) return;
-    UIActivityViewController *controller =
-        [[UIActivityViewController alloc] initWithActivityItems:@[logs] applicationActivities:nil];
-    controller.popoverPresentationController.sourceView = self.shareButton;
-    controller.popoverPresentationController.sourceRect = self.shareButton.bounds;
-    [self presentViewController:controller animated:YES completion:nil];
+    self.shareButton.enabled = NO;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSURL *url = CILogStore.sharedStore.exportFileURL;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.shareButton.enabled = YES;
+            if (!url || !self.view.window || self.presentedViewController) return;
+            UIActivityViewController *controller = [[UIActivityViewController alloc]
+                initWithActivityItems:@[url] applicationActivities:nil];
+            controller.popoverPresentationController.sourceView = self.shareButton;
+            controller.popoverPresentationController.sourceRect = self.shareButton.bounds;
+            [self presentViewController:controller animated:YES completion:nil];
+        });
+    });
 }
 
 - (void)confirmClear {

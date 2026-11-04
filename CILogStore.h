@@ -24,7 +24,9 @@ FOUNDATION_EXPORT NSNotificationName const CILogStoreDidChangeNotification;
            category:(NSString *)category
             message:(NSString *)message;
 - (NSArray<NSString *> *)snapshot;
+/// Includes every retained full-log archive and the longer-lived event stream.
 - (NSString *)exportText;
+- (nullable NSURL *)exportFileURL;
 - (void)clear;
 
 @end

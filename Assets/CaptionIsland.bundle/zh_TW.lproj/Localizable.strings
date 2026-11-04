@@ -166,3 +166,5 @@
 "GROUP_CURRENT_VIDEO_DESCRIPTION" = "個別影片的歌詞、時間校正與字幕語言。";
 "GROUP_DIAGNOSTICS" = "診斷與日誌";
 "GROUP_DIAGNOSTICS_DESCRIPTION" = "詳細記錄、Log 預覽與分享。";
+
+"LOG_RETENTION_HINT" = "預覽顯示最近 500 筆；匯出包含歷史檔。檔案位置：我的 iPhone → App 資料夾 → CaptionIsland → Logs。";

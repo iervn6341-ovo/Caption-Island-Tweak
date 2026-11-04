@@ -154,3 +154,5 @@
 "TITLE_KEYWORDS_RESET" = "既定の文字列に戻す";
 "GEAR_MENU_ITEM" = "プレーヤー設定メニューに表示";
 "GEAR_MENU_ITEM_DESCRIPTION" = "歯車メニューの「画質」「再生速度」の隣に Caption Island の項目を追加します。プレーヤーボタンとは独立しており、片方だけでも両方でも使えます。";
+
+"LOG_RETENTION_HINT" = "プレビューは最新500件。書き出しには過去のログも含まれます。ファイル：このiPhone内 → Appフォルダ → CaptionIsland → Logs。";

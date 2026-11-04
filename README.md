@@ -82,3 +82,24 @@ by, or sponsored by LRCLIB. CaptionIsland does not claim ownership of lyric
 text, timestamps, metadata, or other data returned by LRCLIB; those rights
 remain with their respective owners. Please comply with LRCLIB's terms and all
 applicable rights when using its data.
+
+### Diagnostic log history
+
+Logs are stored under `Documents/CaptionIsland/Logs`. In KACE-Youtube builds,
+open **Files → On My iPhone → YouTube (or your configured app name) → CaptionIsland → Logs**.
+The host IPA must enable `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`;
+KACE-Youtube configures and verifies both during packaging.
+
+- `CaptionIsland.log` plus `.1.log` through `.7.log`: up to 2 MiB each (16 MiB total).
+- `CaptionIsland-events.log` plus `.1.log` through `.3.log`: up to 512 KiB each (2 MiB total).
+  Warnings, errors, and non-routine informational events are kept here so verbose
+  background samples do not evict them as quickly.
+- The in-app viewer shows the latest 500 entries. **Export includes every retained file**,
+  full history oldest first, followed by the separately retained events (which can overlap).
+  Export runs off the main thread and shares a `.txt` file that can be saved in Files.
+- Relaunching preserves archives; the previous cache log is migrated on first launch.
+  Clear Logs removes both streams. History is bounded, so sufficiently old files still expire.
+  Existing URL/token/lyric redaction remains enabled; log archives are excluded from backups.
+
+Files visibility still needs confirmation on a signed IPA/device; desktop smoke tests verify
+storage, rotation and export, not the iOS Files browser UI.
