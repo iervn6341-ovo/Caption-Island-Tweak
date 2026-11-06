@@ -112,3 +112,16 @@ WebVTT fallback，阻止自動翻譯 `tlang` URL 進入下載流程，並確認�
 暫存目錄驗證超過 500 筆仍可匯出、2 MiB 檔案輪替／最舊檔刪除、依時間順序
 合併、關鍵事件獨立保留、重啟不截斷、舊快取搬移／失敗保留原檔、敏感資料遮蔽、
 分享文字檔與清除全部歷史。另以 iOS SDK 編譯檢查日誌分享頁。
+
+## Live Activity lifecycle recovery
+
+Run `bash Tests/Build/ActivityLifecycleSmoke.sh` on macOS. It compiles the actual
+`CIActivityBridge.swift` manager against offline ActivityKit/UIKit doubles. The
+fake system deliberately retains ended/dismissed objects in `activities` to
+reproduce the field failure. Cases cover foreground recovery after background
+deferral, repeated ensure without duplicate creation, active/stale adoption,
+monotonic adopted revisions, same-video dismissal, terminal changes during
+adoption/reuse, and lifecycle creation/age/end-reason diagnostics. No real Live
+Activities or network requests are created. Dates use an isolated defaults suite.
+The production bridge and Objective-C callers are also typechecked against the
+iOS SDK locally; fake lifecycle tests do not establish system UI/APNs behavior.

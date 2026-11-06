@@ -100,6 +100,8 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
 @property (nonatomic) BOOL didLogCueBoundaryScheduler;
 @property (nonatomic) BOOL youtubeSourcesExhausted;
 @property (nonatomic, strong) id<CICaptionPresenting> presenter;
+- (void)endPresenterForReason:(NSString *)reason;
+
 - (void)ensurePresenterForCurrentContext;
 - (void)tryClockTracks:(NSArray<CICaptionTrack *> *)tracks
                  index:(NSUInteger)index
@@ -194,13 +196,21 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         if (!self.context ||
             !CIPreferenceBool(CIEnabledKey, YES)) return;
         if (self.policyExcluded) {
-            [self.presenter end];
+            [self endPresenterForReason:@"foreground video excluded by playback policy"];
             return;
         }
         [self ensurePresenterForCurrentContext];
         self.displayedCueIndex = CIUnrenderedCueIndex;
         if (!self.loading) [self renderAtTime:self.latestPlaybackTime];
     });
+}
+
+- (void)endPresenterForReason:(NSString *)reason {
+    if ([self.presenter respondsToSelector:@selector(endForReason:)]) {
+        [self.presenter endForReason:reason];
+    } else {
+        [self.presenter end];
+    }
 }
 
 - (void)ensurePresenterForCurrentContext {
@@ -395,7 +405,7 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
     self.displayedCueIndex = CIUnrenderedCueIndex;
     if (UIApplication.sharedApplication.applicationState ==
         UIApplicationStateActive) {
-        [self.presenter end];
+        [self endPresenterForReason:@"video excluded by playback policy"];
     } else {
         // Keep an already-running activity dormant during background
         // autoplay. ActivityKit cannot ordinarily start a replacement from
@@ -584,7 +594,7 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
     if (!CIPreferenceBool(CIEnabledKey, YES)) {
         self.resolved = YES;
         self.loadStage = CILoadStageFinished;
-        [self.presenter end];
+        [self endPresenterForReason:@"Caption Island disabled in settings"];
         return;
     }
     [self.presenter beginVideoID:context.videoID title:context.title ?: @""];
@@ -1587,11 +1597,15 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         } else if (self.context) {
             [self beginContext:self.context force:YES];
         }
-        else [self.presenter end];
+        else [self endPresenterForReason:@"preferences reloaded without an active video"];
     });
 }
 
 - (void)stop {
+    [self stopForReason:@"playback coordinator stopped"];
+}
+
+- (void)stopForReason:(NSString *)reason {
     dispatch_async(self.workQueue, ^{
         self.generation++;
         [self.captionTask cancel];
@@ -1611,7 +1625,7 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         self.displayedCueIndex = CIUnrenderedCueIndex;
         self.playbackAdvancing = NO;
         [self cancelCueBoundaryTimer];
-        [self.presenter end];
+        [self endPresenterForReason:reason];
     });
 }
 

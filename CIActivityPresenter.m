@@ -144,22 +144,36 @@ static NSString *CIActivitySourceLabel(
 }
 
 - (void)end {
+    [self endForReason:@"presenter end request"];
+}
+
+- (void)endForReason:(NSString *)reason {
+    [CILogStore.sharedStore recordLevel:CILogLevelInfo category:@"Activity"
+        format:@"Requesting caption activity end for video %@; reason=%@", self.videoID, reason];
     Class bridge = [self bridgeClass];
-    SEL selector = NSSelectorFromString(@"endImmediately:");
+    SEL selector = NSSelectorFromString(@"endImmediately:reason:");
     if ([bridge respondsToSelector:selector]) {
-        ((void (*)(id, SEL, BOOL))objc_msgSend)(bridge, selector, YES);
+        ((void (*)(id, SEL, BOOL, NSString *))objc_msgSend)(bridge, selector, YES, reason);
+    } else {
+        selector = NSSelectorFromString(@"endImmediately:");
+        if ([bridge respondsToSelector:selector])
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(bridge, selector, YES);
     }
     self.videoID = @"";
     self.title = @"";
 }
 
 - (void)endForProcessTermination {
+    [self endForProcessTerminationReason:@"process termination"];
+}
+
+- (void)endForProcessTerminationReason:(NSString *)reason {
     Class bridge = [self bridgeClass];
-    SEL selector = NSSelectorFromString(@"endAllImmediatelyForTermination");
+    SEL selector = NSSelectorFromString(@"endAllImmediatelyForTerminationWithReason:");
     if ([bridge respondsToSelector:selector]) {
-        ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+        ((void (*)(id, SEL, NSString *))objc_msgSend)(bridge, selector, reason);
     } else {
-        [self end];
+        [self endForReason:reason];
     }
     self.videoID = @"";
     self.title = @"";

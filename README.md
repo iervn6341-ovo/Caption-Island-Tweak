@@ -103,3 +103,21 @@ KACE-Youtube configures and verifies both during packaging.
 
 Files visibility still needs confirmation on a signed IPA/device; desktop smoke tests verify
 storage, rotation and export, not the iOS Files browser UI.
+
+### Live Activity recovery diagnostics
+
+Only active/stale activities can be adopted. Ended/dismissed entries are ignored,
+even if ActivityKit still returns them in its activity list. With an eligible
+video selected, returning to the foreground ensures a replacement activity and
+renders the current caption; a background-only replacement is deferred. A
+same-video dismissal still suppresses automatic recreation for that video.
+
+Lifecycle logs include activity ID, video ID, state, original creation date (UTC),
+elapsed wall-clock lifetime, and the event/reason. Creation dates are stored by
+activity ID across process launches (latest 32). Activities created by an older
+build report `created=unknown age=unknown` instead of treating adoption as creation.
+App end requests identify settings/policy, missing player context, player teardown,
+playback completion, duplicate cleanup or process/scene lifecycle. An ActivityKit
+terminal-state notification without a corresponding app request reports the
+initiator as unknown; its observation time may be later than the actual ending.
+These logs do not claim to expose an OS termination reason ActivityKit doesn't supply.

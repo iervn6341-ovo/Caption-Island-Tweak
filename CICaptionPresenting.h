@@ -6,6 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol CICaptionPresenting <NSObject>
 - (void)beginVideoID:(NSString *)videoID title:(NSString *)title;
 @optional
+- (void)endForReason:(NSString *)reason;
 - (void)ensureVideoID:(NSString *)videoID title:(NSString *)title;
 - (void)refreshPresentationForReason:(NSString *)reason;
 - (void)presentText:(NSString *)text

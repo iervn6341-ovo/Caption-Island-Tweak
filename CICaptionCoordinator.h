@@ -25,6 +25,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)refreshPresentationForReason:(NSString *)reason;
 - (void)reloadPreferences;
 - (void)stop;
+- (void)stopForReason:(NSString *)reason;
 - (void)setPresenter:(id<CICaptionPresenting>)presenter;
 @end
 

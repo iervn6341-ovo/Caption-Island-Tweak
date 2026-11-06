@@ -348,7 +348,7 @@ static double CIQuantizedPlaybackRate(double rate) {
         }
     }
     [self endActivityForLifecycleReason:
-        @"YouTube's last scene was closed from the app switcher"];
+        @"YouTube's last scene disconnected; user intent unknown"];
 }
 
 - (void)endActivityForLifecycleReason:(NSString *)reason {
@@ -361,7 +361,7 @@ static double CIQuantizedPlaybackRate(double rate) {
     self.pictureInPicturePreparedController = nil;
     self.controllerLeaseGeneration++;
     CIReleaseRetainedLaunchPrefetchAssertions(reason);
-    [CIActivityPresenter.sharedPresenter endForProcessTermination];
+    [CIActivityPresenter.sharedPresenter endForProcessTerminationReason:reason];
 }
 
 - (void)scheduleControllerLeaseRelease {

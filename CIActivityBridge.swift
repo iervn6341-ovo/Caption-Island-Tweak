@@ -1,5 +1,6 @@
 import ActivityKit
 import Foundation
+import UIKit
 
 private func activityText(
     traditionalChinese: String,
@@ -46,6 +47,39 @@ private func sanitizedActivityText(
         }
     }
     return clippedUTF8(sanitized, maximumBytes: maximumBytes)
+}
+
+// ActivityKit does not expose an existing activity's original creation date.
+// Persist dates by activity ID; old installs remain explicitly "unknown".
+private enum CIActivityLifetime {
+    private static let key = "CaptionIsland.ActivityCreationDates.v1"
+    private static let lock = NSLock()
+
+    static func created(_ id: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        var dates = UserDefaults.standard.dictionary(forKey: key) as? [String: Double] ?? [:]
+        dates[id] = Date().timeIntervalSince1970
+        let newest = dates.sorted { $0.value > $1.value }.prefix(32)
+        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) }), forKey: key)
+    }
+
+    static func description(_ id: String) -> String {
+        lock.lock()
+        let timestamp = (UserDefaults.standard.dictionary(forKey: key)?[id] as? NSNumber)?.doubleValue
+        lock.unlock()
+        guard let timestamp else { return "created=unknown age=unknown" }
+        let date = Date(timeIntervalSince1970: timestamp)
+        let age = max(0, Date().timeIntervalSince(date))
+        return "created=\(ISO8601DateFormatter().string(from: date)) age=\(String(format: "%.1fs", age))"
+    }
+
+    static func log(_ activity: Activity<CICaptionActivityAttributes>, event: String, reason: String) {
+        CIActivityBridge.emit(level: "info", message:
+            "Live Activity lifecycle event=\(event) id=\(activity.id) "
+            + "video=\(activity.content.state.videoID) state=\(activity.activityState) "
+            + "\(description(activity.id)) reason=\(reason)")
+    }
 }
 
 @objc(CIActivityBridge)
@@ -228,8 +262,15 @@ public final class CIActivityBridge: NSObject {
     @objc(endImmediately:)
     public static func end(immediately: Bool) {
         guard targetSupportsLiveActivities(logIfMissing: false) else { return }
+        end(immediately: immediately, reason: "legacy presenter end request")
+    }
+
+    @objc(endImmediately:reason:)
+    public static func end(immediately: Bool, reason: String) {
+        guard targetSupportsLiveActivities(logIfMissing: false) else { return }
+        let safeReason = sanitizedActivityText(reason, maximumBytes: 240)
         enqueue {
-            await CIActivityManager.shared.end(immediately: immediately)
+            await CIActivityManager.shared.end(immediately: immediately, reason: safeReason)
         }
     }
 
@@ -238,6 +279,19 @@ public final class CIActivityBridge: NSObject {
     /// the immediate ActivityKit dismissal request.
     @objc(endAllImmediatelyForTermination)
     public static func endAllImmediatelyForTermination() {
+        endAllImmediatelyForTermination(reason: "process termination")
+    }
+
+    @objc(endAllImmediatelyForTerminationWithReason:)
+    public static func endAllImmediatelyForTermination(reason: String) {
+        let safeReason = sanitizedActivityText(reason, maximumBytes: 240)
+        // Log synchronously before the termination wait blocks the main queue.
+        for activity in Activity<CICaptionActivityAttributes>.activities {
+            NotificationCenter.default.post(name: Notification.Name("CIActivityBridgeLogNotification"),
+                object: nil, userInfo: ["level": "info", "message":
+                    "Live Activity termination request id=\(activity.id) state=\(activity.activityState) "
+                    + "\(CIActivityLifetime.description(activity.id)) reason=\(safeReason)"])
+        }
         let completion = DispatchSemaphore(value: 0)
         Task.detached(priority: .high) {
             let activities =
@@ -342,7 +396,11 @@ private actor CIActivityManager {
     private var lastUpdateHeartbeatUptime: TimeInterval = 0
     private var activityStateTask: Task<Void, Never>?
     private var activityObservationGeneration = 0
+    private var ignoredInactiveIDs = Set<String>()
+    private var didLogDeferredStart = false
+    private var requestedEndReasons: [String: String] = [:]
     private var pendingVerification: (
+        activityID: String,
         revision: Int,
         source: String,
         uptime: TimeInterval
@@ -373,38 +431,25 @@ private actor CIActivityManager {
                 lastNextCueEndMS = 0
                 lastPlaying = true
                 await updateState(waitingState())
-                didLogMissingActivity = false
-                CIActivityBridge.emit(
-                    level: changedVideo ? "info" : "debug",
-                    message: changedVideo
-                        ? "Reused Live Activity for video \(videoID)"
-                        : "Reused existing Live Activity"
-                )
-                return
+                if isUpdatable(currentActivity), activity?.id == currentActivity.id {
+                    didLogMissingActivity = false
+                    CIActivityBridge.emit(
+                        level: changedVideo ? "info" : "debug",
+                        message: changedVideo
+                            ? "Reused Live Activity for video \(videoID)"
+                            : "Reused existing Live Activity"
+                    )
+                    return
+                }
+                if currentActivity.activityState == .dismissed { dismissedVideoID = videoID }
+                await releaseInactiveActivity(currentActivity)
             case .dismissed:
                 dismissedVideoID = self.videoID
                 await releaseInactiveActivity(currentActivity)
             case .ended:
                 await releaseInactiveActivity(currentActivity)
             default:
-                self.videoID = videoID
-                self.title = title.isEmpty ? "YouTube" : title
-                revision += 1
-                lastLine = ""
-                lastSource = ""
-                lastCueStartMS = 0
-                lastCueEndMS = 0
-                lastNextLine = ""
-                lastNextCueStartMS = 0
-                lastNextCueEndMS = 0
-                lastPlaying = true
-                await updateState(waitingState())
-                didLogMissingActivity = false
-                CIActivityBridge.emit(
-                    level: "debug",
-                    message: "Deferred reuse while Live Activity is pending"
-                )
-                return
+                await releaseInactiveActivity(currentActivity)
             }
         }
         if dismissedVideoID == videoID {
@@ -430,34 +475,52 @@ private actor CIActivityManager {
         self.lastNextCueStartMS = 0
         self.lastNextCueEndMS = 0
         self.lastPlaying = true
-        let state = boundedState(waitingState())
-
+        for candidate in systemActivities where !isUpdatable(candidate) {
+            if ignoredInactiveIDs.insert(candidate.id).inserted {
+                CIActivityLifetime.log(candidate, event: "ignored-inactive",
+                    reason: "terminal or pending activities cannot be adopted")
+            }
+        }
+        if ignoredInactiveIDs.count > 64 { ignoredInactiveIDs.removeAll() }
         let existingActivity = systemActivities.first {
-            $0.attributes.sessionID == Self.sessionID
+            $0.attributes.sessionID == Self.sessionID && isUpdatable($0)
         }
         if let existingActivity {
             activity = existingActivity
-            for duplicate in systemActivities
-                where duplicate.id != existingActivity.id {
-                await endActivity(duplicate, immediately: true)
-            }
-            await updateState(state)
+            pendingVerification = nil
+            revision = max(0, existingActivity.content.state.revision) + 1
             observeActivityState(for: existingActivity)
-            didLogMissingActivity = false
-            CIActivityBridge.emit(
-                level: "info",
-                message: "Adopted existing Live Activity for video \(videoID)"
-            )
+            for duplicate in systemActivities
+                where duplicate.id != existingActivity.id && isUpdatable(duplicate) {
+                await endActivity(duplicate, immediately: true, reason: "duplicate active caption activity")
+            }
+            if isUpdatable(existingActivity), activity?.id == existingActivity.id {
+                await updateState(waitingState())
+                if isUpdatable(existingActivity), activity?.id == existingActivity.id {
+                    didLogMissingActivity = false
+                    didLogDeferredStart = false
+                    CIActivityLifetime.log(existingActivity, event: "adopted", reason: "matching active session")
+                    return
+                }
+            }
+            await releaseInactiveActivity(existingActivity)
+        }
+        // UIKit state must be sampled on the main thread. Background audio does
+        // not by itself authorize Activity.request; foreground ensure retries.
+        guard await MainActor.run(body: { UIApplication.shared.applicationState == .active }) else {
+            if !didLogDeferredStart {
+                didLogDeferredStart = true
+                CIActivityBridge.emit(level: "info", message:
+                    "Live Activity recovery deferred until foreground for video \(videoID); no updatable activity")
+            }
             return
         }
-        for legacyActivity in systemActivities {
-            await endActivity(
-                legacyActivity,
-                immediately: true
-            )
+        for legacyActivity in systemActivities where isUpdatable(legacyActivity) {
+            await endActivity(legacyActivity, immediately: true, reason: "replace incompatible caption session")
         }
 
-        await startActivity(state: state)
+        revision = 1
+        await startActivity(state: boundedState(waitingState()))
     }
 
     private func startActivity(
@@ -479,8 +542,11 @@ private actor CIActivityManager {
                 pushType: nil
             )
             if let activity {
+                CIActivityLifetime.created(activity.id)
+                CIActivityLifetime.log(activity, event: "created", reason: "foreground start or recovery")
                 observeActivityState(for: activity)
             }
+            didLogDeferredStart = false
             didLogMissingActivity = false
             CIActivityBridge.emit(
                 level: "info",
@@ -626,9 +692,13 @@ private actor CIActivityManager {
             Activity<CICaptionActivityAttributes>
     ) async {
         let activityID = inactiveActivity.id
-        stopActivityObservation()
         if activity?.id == activityID {
+            CIActivityLifetime.log(inactiveActivity, event: "released-inactive",
+                reason: requestedEndReasons.removeValue(forKey: activityID)
+                    ?? "not updatable during recovery; initiator unknown")
+            stopActivityObservation()
             activity = nil
+            pendingVerification = nil
         }
     }
 
@@ -642,7 +712,13 @@ private actor CIActivityManager {
         }
         stopActivityObservation(cancelActivityStateTask: false)
         guard activity?.id == activityID else { return }
+        if let current = activity {
+            CIActivityLifetime.log(current, event: dismissed ? "observed-dismissed" : "observed-ended",
+                reason: requestedEndReasons.removeValue(forKey: activityID)
+                    ?? "ActivityKit state change; initiator unknown; observation time may be delayed")
+        }
         activity = nil
+        pendingVerification = nil
         let lifecycleDescription = dismissed
             ? "Live Activity was dismissed"
             : "Live Activity ended"
@@ -744,10 +820,10 @@ private actor CIActivityManager {
         )
     }
 
-    func end(immediately: Bool) async {
+    func end(immediately: Bool, reason: String = "presenter end request") async {
         let endingActivity = activity
         if let endingActivity {
-            await endActivity(endingActivity, immediately: immediately)
+            await endActivity(endingActivity, immediately: immediately, reason: reason)
         }
         stopActivityObservation()
         self.activity = nil
@@ -763,6 +839,7 @@ private actor CIActivityManager {
         self.dismissedVideoID = ""
         self.didLogMissingActivity = false
         self.lastUpdateHeartbeatUptime = 0
+        self.pendingVerification = nil
         if endingActivity != nil {
             CIActivityBridge.emit(level: "info", message: "Ended native Live Activity")
         }
@@ -788,7 +865,7 @@ private actor CIActivityManager {
     private func updateState(
         _ state: CICaptionActivityAttributes.ContentState
     ) async {
-        guard let activity else { return }
+        guard let activity, isUpdatable(activity) else { return }
         let safeState = boundedState(state, attributes: activity.attributes)
         let content = ActivityContent(
             state: safeState,
@@ -801,7 +878,12 @@ private actor CIActivityManager {
         // state, so rapid cue changes are still distinct and ordered.
         verifyPreviousSubmission(activity: activity)
         await activity.update(content)
+        guard self.activity?.id == activity.id, isUpdatable(activity) else {
+            pendingVerification = nil
+            return
+        }
         pendingVerification = (
+            activityID: activity.id,
             revision: safeState.revision,
             source: safeState.source.isEmpty ? "gap" : safeState.source,
             uptime: ProcessInfo.processInfo.systemUptime
@@ -829,6 +911,10 @@ private actor CIActivityManager {
         activity: Activity<CICaptionActivityAttributes>
     ) {
         guard let pending = pendingVerification else { return }
+        guard pending.activityID == activity.id else {
+            pendingVerification = nil
+            return
+        }
         // Back-to-back revisions land within milliseconds of each other and
         // would hit the same propagation race. Drop those rather than log a
         // verdict that cannot be trusted.
@@ -936,14 +1022,25 @@ private actor CIActivityManager {
         return state
     }
 
+    private func isUpdatable(_ candidate: Activity<CICaptionActivityAttributes>) -> Bool {
+        switch candidate.activityState {
+        case .active, .stale: return true
+        default: return false
+        }
+    }
+
     private func hasUpdatableActivity() -> Bool {
         guard let activity else { return false }
         switch activity.activityState {
         case .active, .stale:
             return true
         case .dismissed:
+            CIActivityLifetime.log(activity, event: "detected-dismissed",
+                reason: requestedEndReasons.removeValue(forKey: activity.id)
+                    ?? "detected before next update; initiator unknown")
             dismissedVideoID = videoID
             self.activity = nil
+            pendingVerification = nil
             stopActivityObservation()
             CIActivityBridge.emit(
                 level: "info",
@@ -951,18 +1048,26 @@ private actor CIActivityManager {
             )
             return false
         case .ended:
+            CIActivityLifetime.log(activity, event: "detected-ended",
+                reason: requestedEndReasons.removeValue(forKey: activity.id)
+                    ?? "detected before next update; initiator unknown")
             self.activity = nil
+            pendingVerification = nil
             stopActivityObservation()
             return false
         default:
-            return true
+            return false
         }
     }
 
     private func endActivity(
         _ activity: Activity<CICaptionActivityAttributes>,
-        immediately: Bool
+        immediately: Bool,
+        reason: String
     ) async {
+        requestedEndReasons[activity.id] = reason
+        if requestedEndReasons.count > 32 { requestedEndReasons = [activity.id: reason] }
+        CIActivityLifetime.log(activity, event: "app-end-request", reason: reason)
         let finalState = CICaptionActivityAttributes.ContentState(
             line: lastLine.isEmpty
                 ? activityText(

@@ -1505,7 +1505,7 @@ static void CIResolveActivatedPlayback(YTPlayerViewController *controller,
         CIContextForPlayer(playbackData, controller);
     if (!context) {
         [CIBackgroundPlaybackMonitor.sharedMonitor detachPlayerController:controller];
-        [coordinator stop];
+        [coordinator stopForReason:@"activated player has no readable video context"];
         return;
     }
     [coordinator activateContext:context];
@@ -1581,7 +1581,7 @@ static void CIActivatePlayback(YTPlayerViewController *controller, id playbackDa
     });
 }
 
-static void CIStopPlayback(YTPlayerViewController *controller) {
+static void CIStopPlayback(YTPlayerViewController *controller, NSString *reason) {
     if (CIActivePlayerController != controller &&
         ![objc_getAssociatedObject(controller, CIActivePlayerKey) boolValue]) return;
     objc_setAssociatedObject(controller, CIActivePlayerKey, nil,
@@ -1591,7 +1591,7 @@ static void CIStopPlayback(YTPlayerViewController *controller) {
     if (CIActivePlayerController == controller) CIActivePlayerController = nil;
     CIPlaybackLifecycleGeneration++;
     [CIBackgroundPlaybackMonitor.sharedMonitor detachPlayerController:controller];
-    [CICaptionCoordinator.sharedCoordinator stop];
+    [CICaptionCoordinator.sharedCoordinator stopForReason:reason];
 }
 
 %group CaptionIslandActivationHooks
@@ -1659,7 +1659,7 @@ static void CIStopPlayback(YTPlayerViewController *controller) {
 
 - (void)dealloc {
     if ([objc_getAssociatedObject(self, CIActivePlayerKey) boolValue]) {
-        CIStopPlayback(self);
+        CIStopPlayback(self, @"active YouTube player deallocated");
     }
     %orig;
 }
@@ -2277,7 +2277,7 @@ static void CIStopPlayback(YTPlayerViewController *controller) {
         NSTimeInterval position = controller.currentVideoMediaTime;
         NSTimeInterval duration = controller.currentVideoTotalMediaTime;
         if (duration > 0 && position >= 0 && position + 2.0 < duration) return;
-        CIStopPlayback(controller);
+        CIStopPlayback(controller, @"YouTube playback finished and did not advance");
     });
 }
 
