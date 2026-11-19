@@ -71,4 +71,10 @@ FOUNDATION_EXPORT void CIClearVideoOverride(
 
 FOUNDATION_EXPORT NSUInteger CIVideoOverrideCount(void);
 
+/// Validated per-video settings for the optional settings section of a lyric backup.
+FOUNDATION_EXPORT NSDictionary<NSString *, NSDictionary *> *CIVideoOverridesForExport(void);
+/// Restores matching video IDs and preserves unrelated entries, subject to the
+/// normal 500-video retention limit. Malformed and empty decisions are skipped.
+FOUNDATION_EXPORT NSUInteger CIImportVideoOverrides(NSDictionary<NSString *, NSDictionary *> *entries);
+
 NS_ASSUME_NONNULL_END

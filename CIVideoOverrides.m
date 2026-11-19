@@ -19,7 +19,6 @@ static NSString *const CIVideoOverrideUpdatedAtKey = @"updatedAt";
 static const NSUInteger CIVideoOverrideMaximumEntries = 500;
 static const NSUInteger CIVideoOverrideMaximumVideoIDLength = 128;
 static const NSUInteger CIVideoOverrideMaximumTextLength = 256;
-static const NSTimeInterval CIVideoOverrideMaximumAdvance = 30.0;
 
 @interface CIVideoOverride ()
 @property (nonatomic, copy, readwrite) NSString *searchTitle;
@@ -71,14 +70,11 @@ static NSString *CIVideoOverrideCleanVideoID(
     );
 }
 
-static NSTimeInterval CIVideoOverrideClampedAdvance(
+static NSTimeInterval CIVideoOverrideFiniteAdvance(
     NSTimeInterval value
 ) {
     if (!isfinite(value)) return 0;
-    return MAX(
-        -CIVideoOverrideMaximumAdvance,
-        MIN(CIVideoOverrideMaximumAdvance, value)
-    );
+    return value;
 }
 
 static NSArray<NSString *> *CIVideoOverrideCleanLanguages(
@@ -134,20 +130,7 @@ static NSDictionary<NSString *, id> *CIVideoOverrideDictionary(void) {
         ? (NSDictionary<NSString *, id> *)value : @{};
 }
 
-CIVideoOverride * _Nullable CIVideoOverrideForVideoID(
-    NSString * _Nullable videoID
-) {
-    NSString *cleanVideoID = CIVideoOverrideCleanVideoID(videoID);
-    if (cleanVideoID.length == 0) return nil;
-    NSDictionary<NSString *, id> *stored;
-    @synchronized (NSUserDefaults.standardUserDefaults) {
-        id value =
-            [CIVideoOverrideDictionary() objectForKey:cleanVideoID];
-        stored = [value isKindOfClass:NSDictionary.class]
-            ? [(NSDictionary *)value copy] : nil;
-    }
-    if (!stored) return nil;
-
+static CIVideoOverride *CIDecodeVideoOverride(NSDictionary<NSString *, id> *stored) {
     CIVideoOverride *result = [CIVideoOverride new];
     result.searchTitle = CIVideoOverrideCleanString(
         stored[CIVideoOverrideTitleKey],
@@ -168,7 +151,7 @@ CIVideoOverride * _Nullable CIVideoOverrideForVideoID(
         stored[CIVideoOverrideOriginalTitleKey],
         CIVideoOverrideMaximumTextLength
     );
-    result.captionAdvanceSeconds = CIVideoOverrideClampedAdvance(
+    result.captionAdvanceSeconds = CIVideoOverrideFiniteAdvance(
         [[stored objectForKey:CIVideoOverrideAdvanceKey]
             respondsToSelector:@selector(doubleValue)]
             ? [[stored objectForKey:CIVideoOverrideAdvanceKey]
@@ -186,6 +169,23 @@ CIVideoOverride * _Nullable CIVideoOverrideForVideoID(
         result.updatedAt = 0;
     }
     return result;
+}
+
+CIVideoOverride * _Nullable CIVideoOverrideForVideoID(
+    NSString * _Nullable videoID
+) {
+    NSString *cleanVideoID = CIVideoOverrideCleanVideoID(videoID);
+    if (cleanVideoID.length == 0) return nil;
+    NSDictionary<NSString *, id> *stored;
+    @synchronized (NSUserDefaults.standardUserDefaults) {
+        id value =
+            [CIVideoOverrideDictionary() objectForKey:cleanVideoID];
+        stored = [value isKindOfClass:NSDictionary.class]
+            ? [(NSDictionary *)value copy] : nil;
+    }
+    if (!stored) return nil;
+
+    return CIDecodeVideoOverride(stored);
 }
 
 /// The one place a stored entry is created, merged, pruned or deleted.
@@ -227,7 +227,7 @@ static void CIUpdateVideoOverride(
             existing[CIVideoOverrideArtistKey],
             CIVideoOverrideMaximumTextLength
         );
-        entry[CIVideoOverrideAdvanceKey] = @(CIVideoOverrideClampedAdvance(
+        entry[CIVideoOverrideAdvanceKey] = @(CIVideoOverrideFiniteAdvance(
             [existing[CIVideoOverrideAdvanceKey]
                 respondsToSelector:@selector(doubleValue)]
                 ? [existing[CIVideoOverrideAdvanceKey] doubleValue] : 0
@@ -333,7 +333,7 @@ void CISaveVideoOverride(
     NSString *cleanArtist = CIVideoOverrideCleanString(
         searchArtist, CIVideoOverrideMaximumTextLength);
     NSTimeInterval cleanAdvance =
-        CIVideoOverrideClampedAdvance(captionAdvanceSeconds);
+        CIVideoOverrideFiniteAdvance(captionAdvanceSeconds);
     CIUpdateVideoOverride(videoID, originalTitle,
         ^(NSMutableDictionary<NSString *, id> *entry) {
         entry[CIVideoOverrideTitleKey] = cleanTitle;
@@ -411,4 +411,59 @@ NSUInteger CIVideoOverrideCount(void) {
     @synchronized (NSUserDefaults.standardUserDefaults) {
         return CIVideoOverrideDictionary().count;
     }
+}
+
+static NSDictionary *CIEncodedVideoOverride(CIVideoOverride *value) {
+    return @{
+        CIVideoOverrideTitleKey: value.searchTitle,
+        CIVideoOverrideArtistKey: value.searchArtist,
+        CIVideoOverrideAdvanceKey: @(value.captionAdvanceSeconds),
+        CIVideoOverrideLanguagesKey: value.captionLanguagePriorities,
+        CIVideoOverrideCaptionSourceKey: @(value.captionLanguagePriorities.count
+            ? value.captionSourcePreference : CIVideoCaptionSourcePreferenceInherit),
+        CIVideoOverrideLyricsSuppressedKey: @(value.lyricsSuppressed),
+        CIVideoOverrideOriginalTitleKey: value.originalTitle,
+        CIVideoOverrideUpdatedAtKey: @(value.updatedAt),
+    };
+}
+static BOOL CIHasVideoOverrideDecision(CIVideoOverride *value) {
+    return value.searchTitle.length || value.searchArtist.length ||
+        fabs(value.captionAdvanceSeconds) >= .001 || value.captionLanguagePriorities.count ||
+        value.lyricsSuppressed;
+}
+NSDictionary<NSString *, NSDictionary *> *CIVideoOverridesForExport(void) {
+    NSMutableDictionary *entries = [NSMutableDictionary dictionary];
+    @synchronized (NSUserDefaults.standardUserDefaults) {
+        NSDictionary *all = CIVideoOverrideDictionary();
+        for (id videoID in all) {
+            if (entries.count >= CIVideoOverrideMaximumEntries) break;
+            if (![videoID isKindOfClass:NSString.class] || ![videoID length] ||
+                ![videoID isEqual:CIVideoOverrideCleanVideoID(videoID)] ||
+                ![all[videoID] isKindOfClass:NSDictionary.class]) continue;
+            CIVideoOverride *value = CIDecodeVideoOverride(all[videoID]);
+            if (CIHasVideoOverrideDecision(value)) entries[videoID] = CIEncodedVideoOverride(value);
+        }
+    }
+    return entries.copy;
+}
+NSUInteger CIImportVideoOverrides(NSDictionary<NSString *, NSDictionary *> *entries) {
+    if (![entries isKindOfClass:NSDictionary.class]) return 0;
+    NSUInteger imported = 0;
+    for (id videoID in entries) {
+        if (imported >= CIVideoOverrideMaximumEntries) break;
+        if (![videoID isKindOfClass:NSString.class] || ![videoID length] ||
+            ![videoID isEqual:CIVideoOverrideCleanVideoID(videoID)]) continue;
+        id entry = entries[videoID];
+        if (![entry isKindOfClass:NSDictionary.class]) continue;
+        id advance = entry[CIVideoOverrideAdvanceKey];
+        if (advance && (![advance isKindOfClass:NSNumber.class] || !isfinite([advance doubleValue]))) continue;
+        CIVideoOverride *value = CIDecodeVideoOverride(entry);
+        if (!CIHasVideoOverrideDecision(value)) continue;
+        NSDictionary *clean = CIEncodedVideoOverride(value);
+        CIUpdateVideoOverride(videoID, value.originalTitle, ^(NSMutableDictionary *destination) {
+            [destination addEntriesFromDictionary:clean];
+        });
+        imported++;
+    }
+    return imported;
 }

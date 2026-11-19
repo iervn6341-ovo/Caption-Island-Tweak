@@ -33,6 +33,7 @@ CaptionIsland_FILES = \
 	CIActivityPresenter.m \
 	CICaptionCoordinator.m \
 	CIPlayerControlPanel.m \
+	CISongTitleInput.m \
 	CIActivityBridge.swift \
 	Shared/CICaptionActivityAttributes.swift
 CaptionIsland_CFLAGS = -fobjc-arc

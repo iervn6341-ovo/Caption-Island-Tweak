@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <math.h>
 #import "../../CILRCLIBProvider.h"
+#import "../../CIVideoOverrides.h"
 #import "../../CITextUtilities.h"
 #import "../../CIConstants.h"
 #import "../../CILogStore.h"
@@ -838,6 +839,60 @@ int main(void) {
         CIAssert([CILRCLIBProvider importCacheFromURL:invalidURL error:&error] == 0 && error.code == -35 &&
             [CILRCLIBProvider cacheSummary].lyricCount == 1,
             @"a broad picker must still reject unrelated plists without replacing existing lyrics");
+        // The same shareable file must carry large per-video offsets, including
+        // when there are no cached lyrics. Legacy exports leave settings alone.
+        NSString *positiveID = [@"backup-positive-" stringByAppendingString:NSUUID.UUID.UUIDString];
+        NSString *negativeID = [@"backup-negative-" stringByAppendingString:NSUUID.UUID.UUIDString];
+        CISaveVideoOverride(positiveID, @"Chosen title", @"Chosen artist", 500.125, @"Upload title");
+        CISaveVideoCaptionSelection(positiveID, @[@"ja"], CIVideoCaptionSourcePreferenceASR, @"Upload title");
+        CISaveVideoOverride(negativeID, @"Delayed title", @"", -750.5, @"Delayed upload");
+        error = nil;
+        NSURL *combinedURL = [CILRCLIBProvider exportCacheWithError:&error];
+        CIAssert(combinedURL && !error, @"lyrics and timing settings must export together");
+        CIClearVideoOverride(positiveID); CIClearVideoOverride(negativeID);
+        [CILRCLIBProvider clearPersistentCache];
+        NSUInteger settingsCount = 0;
+        CIAssert([CILRCLIBProvider importCacheFromURL:combinedURL importedVideoOverrides:&settingsCount error:&error] == 1 &&
+            settingsCount >= 2 && !error, @"combined import must report both lyric and video-setting counts");
+        CIVideoOverride *positive = CIVideoOverrideForVideoID(positiveID);
+        CIAssert(fabs(positive.captionAdvanceSeconds - 500.125) < .001 &&
+            [positive.searchTitle isEqual:@"Chosen title"] && [positive.searchArtist isEqual:@"Chosen artist"] &&
+            [positive.captionLanguagePriorities isEqual:@[@"ja"]] && positive.captionSourcePreference == CIVideoCaptionSourcePreferenceASR &&
+            fabs(CIVideoOverrideForVideoID(negativeID).captionAdvanceSeconds + 750.5) < .001,
+            @"positive/negative offsets, fractional seconds and related per-video fields must survive backup restoration");
+        NSMutableDictionary *legacy = [exportRoot mutableCopy];
+        [legacy removeObjectForKey:@"videoOverrides"];
+        NSURL *legacyURL = [exportURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Legacy.plist"];
+        CIAssert([legacy writeToURL:legacyURL error:&error], @"prepare an old lyric-only backup");
+        CISaveVideoOverride(positiveID, @"Newer local title", @"", 321, @"Upload title");
+        settingsCount = 99; error = nil;
+        CIAssert([CILRCLIBProvider importCacheFromURL:legacyURL importedVideoOverrides:&settingsCount error:&error] == 1 &&
+            settingsCount == 0 && !error && CIVideoOverrideForVideoID(positiveID).captionAdvanceSeconds == 321,
+            @"old lyric-only backups must import without erasing current video offsets");
+        [CILRCLIBProvider clearPersistentCache];
+        NSURL *settingsURL = [CILRCLIBProvider exportCacheWithError:&error];
+        CIAssert(settingsURL && !error, @"video timing alone must be exportable without cached lyrics");
+        CIClearVideoOverride(positiveID); CIClearVideoOverride(negativeID);
+        CIAssert([CILRCLIBProvider importCacheFromURL:settingsURL importedVideoOverrides:&settingsCount error:&error] == 0 &&
+            settingsCount >= 2 && !error && CIVideoOverrideForVideoID(positiveID).captionAdvanceSeconds == 321 &&
+            CIVideoOverrideForVideoID(negativeID).captionAdvanceSeconds == -750.5,
+            @"settings-only backups must restore large offsets and succeed with zero imported songs");
+        CIAssert(CIImportVideoOverrides(@{positiveID:@{@"captionAdvance":@"not a number"},
+            negativeID:@{@"captionAdvance":@(NAN)}, @"":@{@"captionAdvance":@123}}) == 0 &&
+            CIVideoOverrideForVideoID(positiveID).captionAdvanceSeconds == 321 &&
+            CIVideoOverrideForVideoID(negativeID).captionAdvanceSeconds == -750.5,
+            @"malformed settings must not replace existing offsets");
+        NSMutableDictionary *incompatible = [legacy mutableCopy];
+        incompatible[@"videoOverrides"] = @{@"version":@2, @"entries":@{positiveID:@{@"captionAdvance":@111}}};
+        CIAssert([incompatible writeToURL:legacyURL error:&error], @"prepare an incompatible settings backup");
+        error = nil;
+        CIAssert([CILRCLIBProvider importCacheFromURL:legacyURL importedVideoOverrides:&settingsCount error:&error] == 0 &&
+            error.code == -38 && settingsCount == 0 && [CILRCLIBProvider cacheSummary].lyricCount == 0 &&
+            CIVideoOverrideForVideoID(positiveID).captionAdvanceSeconds == 321,
+            @"an unsupported settings schema must be rejected before mutating lyrics or video settings");
+        CIClearVideoOverride(positiveID); CIClearVideoOverride(negativeID);
+        [NSFileManager.defaultManager removeItemAtURL:combinedURL.URLByDeletingLastPathComponent error:nil];
+        [NSFileManager.defaultManager removeItemAtURL:settingsURL.URLByDeletingLastPathComponent error:nil];
         [NSFileManager.defaultManager removeItemAtURL:exportURL.URLByDeletingLastPathComponent error:nil];
         [CILRCLIBProvider clearPersistentCache];
 

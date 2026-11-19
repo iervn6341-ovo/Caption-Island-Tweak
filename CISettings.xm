@@ -21,6 +21,7 @@
 #import "CIProcessDiagnostics.h"
 #import "CITextUtilities.h"
 #import "CIToastPresenter.h"
+#import "CISongTitleInput.h"
 #import "CIVideoOverrides.h"
 #import <math.h>
 
@@ -179,17 +180,18 @@ static const void *CILRCLIBCacheImporterKey = &CILRCLIBCacheImporterKey;
     // provider URL that still needs it while the importer reads the contents.
     BOOL scoped = [URL startAccessingSecurityScopedResource];
     NSError *error = nil;
-    NSUInteger imported =
-        [CILRCLIBProvider importCacheFromURL:URL error:&error];
+    NSUInteger settingsCount = 0;
+    NSUInteger imported = [CILRCLIBProvider importCacheFromURL:URL
+        importedVideoOverrides:&settingsCount error:&error];
     if (scoped) [URL stopAccessingSecurityScopedResource];
 
-    if (imported > 0) {
+    if (imported > 0 || settingsCount > 0) {
         [CICaptionCoordinator.sharedCoordinator reloadPreferences];
         [controller reloadData];
         CIShowToast([NSString stringWithFormat:CILocalized(
-            @"LRCLIB_CACHE_IMPORT_DONE",
-            @"Imported %lu songs."
-        ), (unsigned long)imported]);
+            @"LRCLIB_CACHE_IMPORT_WITH_SETTINGS_DONE",
+            @"Imported %lu songs and %lu video settings."
+        ), (unsigned long)imported, (unsigned long)settingsCount]);
     } else {
         CIShowToast(error.localizedDescription ?: CILocalized(
             @"LRCLIB_CACHE_IMPORT_FAILED",
@@ -273,6 +275,10 @@ static void CIPresentLRCLIBCache(
        [NSByteCountFormatter stringFromByteCount:(long long)summary.byteCount
                                       countStyle:NSByteCountFormatterCountStyleFile]];
 
+    message = [message stringByAppendingFormat:@"\n%@", [NSString stringWithFormat:CILocalized(
+        @"LRCLIB_CACHE_VIDEO_SETTINGS_SUMMARY",
+        @"Backup also includes settings for %lu videos, including caption timing."
+    ), (unsigned long)CIVideoOverrideCount()]];
     UIAlertController *sheet = [UIAlertController
         alertControllerWithTitle:CILocalized(@"LRCLIB_CACHE", @"Saved lyrics")
         message:message
@@ -541,6 +547,8 @@ static void CIPresentCurrentVideoOverride(
                 ? automaticTitle
                 : CILocalized(@"VIDEO_OVERRIDE_SEARCH_TITLE", @"LRCLIB search title");
             field.text = override.searchTitle ?: @"";
+            CIConfigureSongTitleCandidates(field, [CICaptionCoordinator.sharedCoordinator
+                LRCLIBReadingsForContext:context]);
             field.clearButtonMode = UITextFieldViewModeWhileEditing;
             field.autocorrectionType = UITextAutocorrectionTypeNo;
         }];
@@ -559,7 +567,7 @@ static void CIPresentCurrentVideoOverride(
             );
             if (override &&
                 fabs(override.captionAdvanceSeconds) >= 0.001) {
-                field.text = [NSString stringWithFormat:@"%.3g",
+                field.text = [NSString stringWithFormat:@"%.15g",
                     override.captionAdvanceSeconds];
             }
             field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
@@ -600,8 +608,6 @@ static void CIPresentCurrentVideoOverride(
                     ));
                     return;
                 }
-                BOOL timingWasClamped = fabs(advance) > 30.0;
-                advance = MAX(-30.0, MIN(30.0, advance));
                 CISaveVideoOverride(
                     context.videoID,
                     alert.textFields[0].text,
@@ -612,15 +618,10 @@ static void CIPresentCurrentVideoOverride(
                 [CICaptionCoordinator.sharedCoordinator
                     reloadPreferences];
                 [settingsViewController reloadData];
-                CIShowToast(timingWasClamped
-                    ? CILocalized(
-                        @"VIDEO_OVERRIDE_CLAMPED",
-                        @"Saved; caption timing was limited to 30 seconds."
-                    )
-                    : CILocalized(
-                        @"VIDEO_OVERRIDE_SAVED",
-                        @"Video-specific lyric settings saved."
-                    ));
+                CIShowToast(CILocalized(
+                    @"VIDEO_OVERRIDE_SAVED",
+                    @"Video-specific lyric settings saved."
+                ));
             }];
         [alert addAction:saveAction];
         CICaptionAdvanceValidator *validator =
@@ -982,7 +983,7 @@ static NSArray *CIBuildSettingsItems(YTSettingsViewController * __weak settingsV
         )
         titleDescription:CILocalized(
             @"LRCLIB_CACHE_DESCRIPTION",
-            @"Export the saved lyrics to move them to another device, import a previous export, or forget everything and look the current video up again."
+            @"Export saved lyrics and video-specific settings, including caption timing, or restore a previous backup."
         )
         accessibilityIdentifier:@"CaptionIsland.LRCLIBCache"
         detailTextBlock:^NSString * {

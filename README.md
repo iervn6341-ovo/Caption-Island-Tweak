@@ -68,8 +68,17 @@ Saved LRCLIB lyrics can be exported as `CaptionIsland-Lyrics.plist` and imported
 from **Caption Island → Captions and lyrics → Saved lyrics → Import**. Import copies the selected file
 and accepts generic provider types as well as property lists; the existing lyric
 schema, size and content checks decide whether its contents can be imported.
-The original selected file is not edited. This lyric archive is separate from
-YTKACE's JSON settings transfer.
+The archive also backs up each video's caption timing, custom song title/artist,
+caption-language/source choice and lyrics-off decision. Settings-only backups
+are supported, and old lyric-only archives leave current video settings intact.
+The original selected file is not edited. YTKACE's JSON settings transfer also
+includes per-video settings when paired with a compatible YTKACE build.
+
+Caption timing accepts positive or negative seconds without a ±30-second ceiling,
+both in Current video settings and with the player's ±3/±0.5-second controls.
+The custom song-title field has a native trailing arrow menu containing the
+current video's title candidates. Choosing one fills the field for further
+editing; it only searches after Search is pressed.
 
 - **YouTube captions:** the video's available CC and ASR caption tracks.
 - **LRCLIB:** synchronized LRC lyrics or plain-text lyrics returned by the

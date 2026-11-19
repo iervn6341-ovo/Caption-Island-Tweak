@@ -48,14 +48,13 @@
 "VIDEO_OVERRIDE_COUNT" = "%lu videos saved";
 "VIDEO_OVERRIDE_NO_VIDEO" = "Open a video first, then return here.";
 "VIDEO_OVERRIDE_TITLE" = "Current video lyric settings";
-"VIDEO_OVERRIDE_MESSAGE" = "Video: %@\nDetected title: %@\nDetected artist: %@\nEnter a custom title and leave artist empty to search by title only. Positive seconds display captions earlier; the range is -30 to +30 seconds.";
+"VIDEO_OVERRIDE_MESSAGE" = "Video: %@\nDetected title: %@\nDetected artist: %@\nEnter a custom title and leave artist empty to search by title only. Positive seconds display captions earlier; negative seconds display them later.";
 "VIDEO_OVERRIDE_SEARCH_TITLE" = "LRCLIB search title";
 "VIDEO_OVERRIDE_SEARCH_ARTIST" = "Artist (optional)";
 "VIDEO_OVERRIDE_ADVANCE" = "Caption advance seconds (+ earlier)";
 "VIDEO_OVERRIDE_RESET" = "Reset for this video";
 "VIDEO_OVERRIDE_RESET_DONE" = "Video-specific settings reset.";
 "VIDEO_OVERRIDE_INVALID_ADVANCE" = "Enter a valid number of seconds.";
-"VIDEO_OVERRIDE_CLAMPED" = "Saved; caption timing was limited to 30 seconds.";
 "VIDEO_OVERRIDE_SAVED" = "Video-specific lyric settings saved.";
 "VIDEO_LANGUAGE_PRIORITY" = "Current video caption languages";
 "VIDEO_LANGUAGE_PRIORITY_DESCRIPTION" = "Save a separate YouTube caption-language order for the video that is currently playing.";
@@ -90,7 +89,7 @@
 "RETURN_HOME_MODE_YOUPIP" = "YouPiP (automatic Picture in Picture)";
 "RETURN_HOME_MODE_CAPTION_ISLAND" = "Caption Island (background captions)";
 "LRCLIB_CACHE" = "Saved lyrics";
-"LRCLIB_CACHE_DESCRIPTION" = "Lyrics are saved permanently, so reopening a video never repeats the lookup. Browse or delete them, search by song, and export to move them to another device.";
+"LRCLIB_CACHE_DESCRIPTION" = "Lyrics are saved permanently. Browse, search, or delete them, and back up lyrics together with per-video settings, including caption timing.";
 "LRCLIB_CACHE_COUNT" = "%lu songs";
 "LRCLIB_CACHE_SUMMARY" = "%lu songs saved, %lu lookups remembered as having no lyrics, %@ on disk.";
 "LRCLIB_CACHE_EXPORT" = "Export…";
@@ -168,3 +167,6 @@
 "GROUP_DIAGNOSTICS_DESCRIPTION" = "Detailed logging, preview and sharing.";
 
 "LOG_RETENTION_HINT" = "Preview: latest 500 entries. Export includes archives. Files: On My iPhone → app folder → CaptionIsland → Logs.";
+"SONG_TITLE_CANDIDATES" = "Song title candidates";
+"LRCLIB_CACHE_IMPORT_WITH_SETTINGS_DONE" = "Imported %lu songs and %lu video settings.";
+"LRCLIB_CACHE_VIDEO_SETTINGS_SUMMARY" = "Backup also includes settings for %lu videos, including caption timing.";

@@ -6,11 +6,9 @@
 #import "CIModels.h"
 #import "CITextUtilities.h"
 #import "CIToastPresenter.h"
+#import "CISongTitleInput.h"
 #import "CIVideoOverrides.h"
 
-// The same ±30s ceiling the settings screen enforces, so a value saved here can
-// never be one the settings screen would reject.
-static const NSTimeInterval CIPanelMaximumAdvance = 30.0;
 // Offered nudges. Coarse and fine in both directions covers the two things users
 // actually do: fix a whole line of drift, then trim it.
 static const NSTimeInterval CIPanelCoarseStep = 3.0;
@@ -101,15 +99,15 @@ static UIViewController *CIPanelPresenter(UIViewController *hint) {
 /// silently erase a title the user typed on the settings screen.
 - (void)commitAdvance:(NSTimeInterval)advance {
     CIVideoOverride *existing = self.override;
-    NSTimeInterval clamped =
-        MAX(-CIPanelMaximumAdvance, MIN(CIPanelMaximumAdvance, advance));
-    // Collapse float noise so repeated ±0.5 taps cannot drift to 2.9999999.
-    clamped = round(clamped * 10.0) / 10.0;
+    if (!isfinite(advance)) return;
+    // Collapse float noise without imposing a time-offset ceiling.
+    NSTimeInterval rounded = isfinite(advance * 10.0)
+        ? round(advance * 10.0) / 10.0 : advance;
     CISaveVideoOverride(
         self.context.videoID,
         existing.searchTitle,
         existing.searchArtist,
-        clamped,
+        rounded,
         self.context.title
     );
     [CICaptionCoordinator.sharedCoordinator reloadPreferences];
@@ -558,6 +556,7 @@ static UIViewController *CIPanelPresenter(UIViewController *hint) {
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
         field.placeholder = self.readings.firstObject.title ?: @"";
+        CIConfigureSongTitleCandidates(field, self.readings);
         field.clearButtonMode = UITextFieldViewModeWhileEditing;
         field.autocorrectionType = UITextAutocorrectionTypeNo;
         field.returnKeyType = UIReturnKeySearch;

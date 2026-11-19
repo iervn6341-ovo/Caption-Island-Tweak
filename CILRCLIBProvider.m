@@ -2,6 +2,7 @@
 #import "CICaptionParser.h"
 #import "CITextUtilities.h"
 #import "CILogStore.h"
+#import "CIVideoOverrides.h"
 #import <float.h>
 #import <math.h>
 #import <TargetConditionals.h>
@@ -43,6 +44,8 @@ static const NSTimeInterval CILRCLIBMaximumBlockCooldown = 24 * 60 * 60;
 // limit is exceeded — the export file is the way to keep more than this.
 static const NSUInteger CILRCLIBMaximumCacheEntries = 2000;
 static const NSUInteger CILRCLIBMaximumCacheBytes = 8 * 1024 * 1024;
+// Backups also carry up to 500 per-video settings, outside the lyric cache.
+static const NSUInteger CILRCLIBMaximumBackupBytes = 12 * 1024 * 1024;
 static NSString *const CILRCLIBCooldownDefaultsKey =
     @"CaptionIsland.LRCLIBCooldowns";
 static NSString *const CILRCLIBCacheKindResult = @"result";
@@ -684,9 +687,10 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
             CILRCLIBCacheEntryHasExpired(entry, now)) continue;
         exported[key] = entry;
     }
-    if (exported.count == 0) {
+    NSDictionary *videoOverrides = CIVideoOverridesForExport();
+    if (exported.count == 0 && videoOverrides.count == 0) {
         if (error) {
-            *error = CILRCLIBError(-30, @"There are no cached lyrics to export.");
+            *error = CILRCLIBError(-30, @"There are no saved lyrics or video settings to export.");
         }
         return nil;
     }
@@ -695,6 +699,7 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
         dataWithPropertyList:@{
             @"version": @(CILRCLIBCacheSchemaVersion),
             @"entries": exported,
+            @"videoOverrides": @{ @"version": @1, @"entries": videoOverrides },
         }
         format:NSPropertyListBinaryFormat_v1_0
         options:0
@@ -730,8 +735,12 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
 }
 
 + (NSUInteger)importCacheFromURL:(NSURL *)URL error:(NSError **)error {
+    return [self importCacheFromURL:URL importedVideoOverrides:NULL error:error];
+}
++ (NSUInteger)importCacheFromURL:(NSURL *)URL importedVideoOverrides:(NSUInteger *)settingsCount error:(NSError **)error {
+    if (settingsCount) *settingsCount = 0;
     NSData *data = [NSData dataWithContentsOfURL:URL options:0 error:nil];
-    if (data.length == 0 || data.length > CILRCLIBMaximumCacheBytes) {
+    if (data.length == 0 || data.length > CILRCLIBMaximumBackupBytes) {
         if (error) {
             *error = CILRCLIBError(-34, data.length == 0
                 ? @"The selected file could not be read."
@@ -764,6 +773,13 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
         return 0;
     }
 
+    id settings = root[@"videoOverrides"];
+    if (settings && (![settings isKindOfClass:NSDictionary.class] ||
+        ![settings[@"version"] isEqual:@1] || ![settings[@"entries"] isKindOfClass:NSDictionary.class])) {
+        if (error) *error = CILRCLIBError(-38, @"The export contains incompatible video settings.");
+        return 0;
+    }
+
     CILRCLIBProvider *provider = [CILRCLIBProvider new];
     NSUInteger imported = 0;
     for (id key in incoming) {
@@ -783,9 +799,11 @@ static NSString *CILRCLIBDisplayLyricsForEntry(NSDictionary *entry) {
                           forKey:key];
         imported++;
     }
-    if (imported == 0 && error) {
+    NSUInteger restoredSettings = settings ? CIImportVideoOverrides(settings[@"entries"]) : 0;
+    if (settingsCount) *settingsCount = restoredSettings;
+    if (imported == 0 && restoredSettings == 0 && error) {
         *error = CILRCLIBError(-37,
-            @"The export contained no usable lyrics.");
+            @"The export contained no usable lyrics or video settings.");
     }
     return imported;
 }

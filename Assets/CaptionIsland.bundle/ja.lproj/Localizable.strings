@@ -48,14 +48,13 @@
 "VIDEO_OVERRIDE_COUNT" = "%lu 件保存済み";
 "VIDEO_OVERRIDE_NO_VIDEO" = "先に動画を開いてから、ここに戻ってください。";
 "VIDEO_OVERRIDE_TITLE" = "現在の動画専用設定";
-"VIDEO_OVERRIDE_MESSAGE" = "動画：%@\n検出した曲名：%@\n検出したアーティスト：%@\n曲名を入力してアーティストを空欄にすると、曲名だけで検索します。正の秒数で字幕を早く表示します。範囲は -30～+30 秒です。";
+"VIDEO_OVERRIDE_MESSAGE" = "動画：%@\n検出した曲名：%@\n検出したアーティスト：%@\n曲名を入力してアーティストを空欄にすると、曲名だけで検索します。正の秒数で字幕を早く、負の秒数で遅く表示します。";
 "VIDEO_OVERRIDE_SEARCH_TITLE" = "LRCLIB 検索曲名";
 "VIDEO_OVERRIDE_SEARCH_ARTIST" = "アーティスト（任意）";
 "VIDEO_OVERRIDE_ADVANCE" = "字幕を早める秒数（＋で早く）";
 "VIDEO_OVERRIDE_RESET" = "この動画をリセット";
 "VIDEO_OVERRIDE_RESET_DONE" = "動画専用設定をリセットしました。";
 "VIDEO_OVERRIDE_INVALID_ADVANCE" = "有効な秒数を入力してください。";
-"VIDEO_OVERRIDE_CLAMPED" = "保存しました。字幕の調整値は 30 秒以内に制限されました。";
 "VIDEO_OVERRIDE_SAVED" = "動画専用の歌詞設定を保存しました。";
 "VIDEO_LANGUAGE_PRIORITY" = "現在の動画の字幕言語";
 "VIDEO_LANGUAGE_PRIORITY_DESCRIPTION" = "再生中の動画に専用の YouTube 字幕言語順序を保存します。";
@@ -90,7 +89,7 @@
 "RETURN_HOME_MODE_YOUPIP" = "YouPiP（自動ピクチャ・イン・ピクチャ）";
 "RETURN_HOME_MODE_CAPTION_ISLAND" = "Caption Island（バックグラウンド字幕）";
 "LRCLIB_CACHE" = "保存済みの歌詞";
-"LRCLIB_CACHE_DESCRIPTION" = "歌詞は無期限に保存されるため、同じ動画を開き直しても再検索しません。閲覧・検索・削除ができ、書き出して別のデバイスへ移せます。";
+"LRCLIB_CACHE_DESCRIPTION" = "歌詞は無期限に保存され、閲覧・検索・削除ができます。書き出すと字幕の時間調整を含む動画ごとの設定もバックアップします。";
 "LRCLIB_CACHE_COUNT" = "%lu 曲";
 "LRCLIB_CACHE_SUMMARY" = "%lu 曲を保存、%lu 件は歌詞なしとして記録、ディスク使用量 %@。";
 "LRCLIB_CACHE_EXPORT" = "書き出す…";
@@ -156,3 +155,6 @@
 "GEAR_MENU_ITEM_DESCRIPTION" = "歯車メニューの「画質」「再生速度」の隣に Caption Island の項目を追加します。プレーヤーボタンとは独立しており、片方だけでも両方でも使えます。";
 
 "LOG_RETENTION_HINT" = "プレビューは最新500件。書き出しには過去のログも含まれます。ファイル：このiPhone内 → Appフォルダ → CaptionIsland → Logs。";
+"SONG_TITLE_CANDIDATES" = "曲名の候補";
+"LRCLIB_CACHE_IMPORT_WITH_SETTINGS_DONE" = "%lu 曲と %lu 件の動画設定を読み込みました。";
+"LRCLIB_CACHE_VIDEO_SETTINGS_SUMMARY" = "バックアップには字幕の時間調整を含む %lu 件の動画設定も含まれます。";

@@ -26,6 +26,9 @@ int main(void) {
             fabs(CIAdjustedCaptionBoundary(0.0, -2.0) - 2.0) < 0.001,
             @"a negative advance should delay a zero-time ActivityKit boundary"
         );
+        CIAssert(CIAdjustedCaptionLookupTime(10, 500.125) == 510.125 &&
+            CIAdjustedCaptionBoundary(10, -750.5) == 760.5,
+            @"large advances and delays must reach the caption lookup and boundary calculation unchanged");
         NSLog(@"Caption timing smoke passed");
     }
     return 0;

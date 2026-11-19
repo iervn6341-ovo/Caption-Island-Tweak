@@ -70,15 +70,21 @@ typedef void (^CILRCLIBCompletion)(CILRCLIBResult * _Nullable result,
 /// Counts what is currently cached, ignoring entries that have already expired.
 + (CILRCLIBCacheSummary *)cacheSummary;
 
-/// Writes the cached lyrics to a shareable file and returns its location, or nil
+/// Writes cached lyrics and per-video settings (including caption timing) to a shareable file and returns its location, or nil
 /// with `error` set. Misses and expired entries are left out: they are
 /// short-lived and worthless to carry to another device.
 + (nullable NSURL *)exportCacheWithError:(NSError * _Nullable * _Nullable)error;
 
-/// Merges an exported file into the cache and returns how many entries were
-/// added. The file is untrusted input, so every entry is re-validated and
+/// Merges an exported file into the cache and restores any per-video settings.
+/// Returns the number of lyrics added (zero may still mean settings restored). The file is untrusted input, so every entry is re-validated and
 /// anything malformed is skipped rather than failing the whole import.
 + (NSUInteger)importCacheFromURL:(NSURL *)URL
+                           error:(NSError * _Nullable * _Nullable)error;
+
+/// Also reports restored per-video settings; settings-only and old lyric-only
+/// exports are both accepted. The return value remains the lyric count.
++ (NSUInteger)importCacheFromURL:(NSURL *)URL
+          importedVideoOverrides:(NSUInteger * _Nullable)settingsCount
                            error:(NSError * _Nullable * _Nullable)error;
 
 /// Looks up one committed reading of a title. Use this only when the query is

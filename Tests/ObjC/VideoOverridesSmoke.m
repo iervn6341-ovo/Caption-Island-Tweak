@@ -69,8 +69,8 @@ int main(void) {
         );
         stored = CIVideoOverrideForVideoID(videoID);
         CIAssert(
-            fabs(stored.captionAdvanceSeconds - 30.0) < 0.001,
-            @"positive caption advance should clamp to 30 seconds"
+            fabs(stored.captionAdvanceSeconds - 500.0) < 0.001,
+            @"positive caption advance beyond 30 seconds must round-trip"
         );
         CIAssert([stored.captionLanguagePriorities
             isEqualToArray:@[@"ja"]],
@@ -88,8 +88,8 @@ int main(void) {
         );
         stored = CIVideoOverrideForVideoID(videoID);
         CIAssert(
-            fabs(stored.captionAdvanceSeconds + 30.0) < 0.001,
-            @"negative caption advance should clamp to -30 seconds"
+            fabs(stored.captionAdvanceSeconds + 500.0) < 0.001,
+            @"negative caption advance beyond 30 seconds must round-trip"
         );
 
         CISaveVideoCaptionLanguagePriorities(
@@ -116,6 +116,13 @@ int main(void) {
                 CIVideoCaptionSourcePreferenceInherit,
             @"a source without a language must safely collapse to inherit");
 
+        CIAssert(stored.captionAdvanceSeconds == -500,
+            @"updating caption selection must not clamp or lose a large stored offset");
+        for (NSNumber *invalid in @[@(NAN), @(INFINITY), @(-INFINITY)]) {
+            CISaveVideoOverride(videoID, @"Still valid", @"", invalid.doubleValue, @"Upload");
+            CIAssert(CIVideoOverrideForVideoID(videoID).captionAdvanceSeconds == 0,
+                @"removing the offset ceiling must still reject non-finite timing values");
+        }
         CIClearVideoOverride(videoID);
         CIAssert(CIVideoOverrideForVideoID(videoID) == nil,
             @"clearing an override should remove it");

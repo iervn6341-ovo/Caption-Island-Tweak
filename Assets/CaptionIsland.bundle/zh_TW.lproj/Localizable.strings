@@ -48,14 +48,13 @@
 "VIDEO_OVERRIDE_COUNT" = "已儲存 %lu 部影片";
 "VIDEO_OVERRIDE_NO_VIDEO" = "請先開啟一部影片，再回到這裡設定。";
 "VIDEO_OVERRIDE_TITLE" = "目前影片的專屬設定";
-"VIDEO_OVERRIDE_MESSAGE" = "影片：%@\n自動辨識歌名：%@\n自動辨識歌手：%@\n填寫自訂歌名但將歌手留白時，會只用歌名搜尋。秒數為正值時字幕會提早顯示，範圍為 -30～+30 秒。";
+"VIDEO_OVERRIDE_MESSAGE" = "影片：%@\n自動辨識歌名：%@\n自動辨識歌手：%@\n填寫自訂歌名但將歌手留白時，會只用歌名搜尋。秒數為正值時字幕會提早顯示，負值則延後顯示。";
 "VIDEO_OVERRIDE_SEARCH_TITLE" = "LRCLIB 搜尋歌名";
 "VIDEO_OVERRIDE_SEARCH_ARTIST" = "歌手（選填）";
 "VIDEO_OVERRIDE_ADVANCE" = "字幕提前秒數（＋代表提早）";
 "VIDEO_OVERRIDE_RESET" = "重設這部影片";
 "VIDEO_OVERRIDE_RESET_DONE" = "已重設這部影片的專屬設定。";
 "VIDEO_OVERRIDE_INVALID_ADVANCE" = "請輸入有效的秒數。";
-"VIDEO_OVERRIDE_CLAMPED" = "已儲存；字幕時間已限制在 30 秒內。";
 "VIDEO_OVERRIDE_SAVED" = "已儲存這部影片的歌詞設定。";
 "VIDEO_LANGUAGE_PRIORITY" = "目前影片的字幕語言順序";
 "VIDEO_LANGUAGE_PRIORITY_DESCRIPTION" = "針對目前播放中的影片另外儲存一組 YouTube 字幕語言優先順序。";
@@ -90,7 +89,7 @@
 "RETURN_HOME_MODE_YOUPIP" = "YouPiP（自動子母畫面）";
 "RETURN_HOME_MODE_CAPTION_ISLAND" = "Caption Island（背景字幕）";
 "LRCLIB_CACHE" = "已儲存的歌詞";
-"LRCLIB_CACHE_DESCRIPTION" = "歌詞會永久保存，重看同一支影片不會再查詢一次。可瀏覽、搜尋、刪除，也可匯出以搬移到其他裝置。";
+"LRCLIB_CACHE_DESCRIPTION" = "歌詞會永久保存，可瀏覽、搜尋及刪除。匯出時會一併備份各影片的設定，包含字幕時間偏移。";
 "LRCLIB_CACHE_COUNT" = "%lu 首";
 "LRCLIB_CACHE_SUMMARY" = "已儲存 %lu 首歌詞，%lu 筆記錄為查無歌詞，占用 %@。";
 "LRCLIB_CACHE_EXPORT" = "匯出…";
@@ -168,3 +167,6 @@
 "GROUP_DIAGNOSTICS_DESCRIPTION" = "詳細記錄、Log 預覽與分享。";
 
 "LOG_RETENTION_HINT" = "預覽顯示最近 500 筆；匯出包含歷史檔。檔案位置：我的 iPhone → App 資料夾 → CaptionIsland → Logs。";
+"SONG_TITLE_CANDIDATES" = "歌名候選";
+"LRCLIB_CACHE_IMPORT_WITH_SETTINGS_DONE" = "已匯入 %lu 首歌詞及 %lu 部影片的設定。";
+"LRCLIB_CACHE_VIDEO_SETTINGS_SUMMARY" = "備份亦包含 %lu 部影片的設定，包括字幕時間偏移。";

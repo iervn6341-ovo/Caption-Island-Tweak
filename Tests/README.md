@@ -125,3 +125,26 @@ adoption/reuse, and lifecycle creation/age/end-reason diagnostics. No real Live
 Activities or network requests are created. Dates use an isolated defaults suite.
 The production bridge and Objective-C callers are also typechecked against the
 iOS SDK locally; fake lifecycle tests do not establish system UI/APNs behavior.
+
+## Caption timing, candidate input and backup
+
+`bash Tests/Build/LRCLIBProviderSmoke.sh` also round-trips +500.125 and −750.5
+seconds together with per-video title, artist and caption selection. It covers
+settings-only archives, old lyric-only imports that preserve local settings,
+invalid records and unknown settings versions rejected before any writes.
+`ObjC/VideoOverridesSmoke.m` verifies large positive/negative values survive
+other preference updates and non-finite values are still rejected.
+
+Build the iPhone fixture with
+`bash Tests/Build/SongTitleInputSmoke.sh /tmp/SongTitleInputSmoke.app`, install it
+on a disposable simulator, and launch `dev.captionisland.song-title-smoke`.
+Read `Documents/result.txt`. It links the production `CISongTitleInput.m` and
+checks candidate order/deduplication, replacing an editable draft, editing-change
+notification, retaining the prompt without searching, an empty list and field
+release. `--preview-menu` holds the alert and opens the native menu for visual
+inspection. The fixture supplies a sample alert; it does not load YouTube.
+
+On November 19, input and open-menu rendering were inspected on an iPhone 17
+simulator with iOS 27.2. The changed Objective-C UI and settings code were also
+checked with the arm64 iPhoneOS SDK and iOS 17.5 deployment target. Signed-device
+YouTube presentation remains to be confirmed with the packaged build.
