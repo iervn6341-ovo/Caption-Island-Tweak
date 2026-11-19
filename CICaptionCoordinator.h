@@ -17,6 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<CISongQuery *> *)LRCLIBReadingsForContext:(CIVideoContext *)context;
 - (void)updatePlaybackTime:(NSTimeInterval)time;
 - (void)updatePlaybackTime:(NSTimeInterval)time playing:(BOOL)playing;
+/// YouTube's reported playback speed. Zero (pause) is ignored here; the
+/// caption clock and cue-boundary timer use the last positive rate.
+- (void)updatePlaybackRate:(double)rate;
 - (void)setPlaybackSuppressed:(BOOL)suppressed;
 - (void)playbackDidFinish;
 - (void)playerViewDidAppear;

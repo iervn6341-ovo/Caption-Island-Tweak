@@ -96,6 +96,8 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
 @property (nonatomic) NSTimeInterval scheduledCueBoundaryTime;
 @property (nonatomic) NSTimeInterval playbackAnchorTime;
 @property (nonatomic) NSTimeInterval playbackAnchorUptime;
+/// Media seconds per wall-clock second, as reported by YouTube's player.
+@property (nonatomic) double playbackRate;
 @property (nonatomic) BOOL playbackAdvancing;
 @property (nonatomic) BOOL didLogCueBoundaryScheduler;
 @property (nonatomic) BOOL youtubeSourcesExhausted;
@@ -175,6 +177,7 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         _loadStage = CILoadStageIdle;
         _displayedCueIndex = CIUnrenderedCueIndex;
         _lastSubmittedTime = -DBL_MAX;
+        _playbackRate = 1.0;
         _presenter = CIActivityPresenter.sharedPresenter;
         [NSNotificationCenter.defaultCenter addObserver:self
             selector:@selector(applicationDidBecomeActive:)
@@ -1124,7 +1127,9 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
           generation:(NSUInteger)generation
             cacheKey:(NSString *)cacheKey {
     if (generation != self.generation || cues.count == 0) return;
-    self.cues = [cues copy];
+    // A sub-second silence would otherwise cost two ActivityKit submissions
+    // ("♪", then the next line), and the second waits behind the first.
+    self.cues = CIBridgeShortCaptionGaps(cues, CICaptionShortGapBridgeSeconds);
     self.loading = NO;
     self.resolved = YES;
     self.loadStage = CILoadStageFinished;
@@ -1274,6 +1279,16 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
     dispatch_async(self.workQueue, ^{
         BOOL playbackStateChanged =
             self.playbackAdvancing != playing;
+        // The cue-boundary timer advances the caption from its own estimate,
+        // and YouTube's media-time getter routinely reports a little behind
+        // it. Rendering such a sample would select the previous cue again and
+        // cost two extra ActivityKit submissions (N+1 → N → N+1). A genuine
+        // backward seek moves further than the tolerance and is still honoured.
+        if (playing && !playbackStateChanged &&
+            CIIsBackwardPlaybackJitter(time, self.latestPlaybackTime,
+                CIPlaybackJitterToleranceSeconds)) {
+            return;
+        }
         // YouTube may report time many times per second. Five samples per
         // second is enough to keep the wall-clock anchor accurate; ActivityKit
         // is still updated only when the cue changes.
@@ -1291,6 +1306,37 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
             [self scheduleCueBoundaryFromPlaybackTime:time];
         } else {
             [self cancelCueBoundaryTimer];
+        }
+    });
+}
+
+- (void)updatePlaybackRate:(double)rate {
+    // Zero is a pause; updatePlaybackTime:playing: owns that transition, and
+    // keeping the last positive rate lets playback resume at the same speed.
+    if (!isfinite(rate) || rate <= 0.001) return;
+    double sanitizedRate = CISanitizedPlaybackRate(rate);
+    dispatch_async(self.workQueue, ^{
+        if (fabs(sanitizedRate - self.playbackRate) < 0.01) return;
+        double previousRate = self.playbackRate;
+        if (self.playbackAdvancing && self.playbackAnchorUptime > 0) {
+            // Close the segment played at the old rate before switching, so
+            // the estimate stays continuous across the change.
+            NSTimeInterval uptime = NSProcessInfo.processInfo.systemUptime;
+            NSTimeInterval estimate =
+                [self estimatedAdvancingPlaybackTime];
+            self.latestPlaybackTime = estimate;
+            self.playbackAnchorTime = estimate;
+            self.playbackAnchorUptime = uptime;
+        }
+        self.playbackRate = sanitizedRate;
+        CIAODLog(@"event=rate_changed from=%.2f to=%.2f media_s=%.3f",
+            previousRate, sanitizedRate, self.latestPlaybackTime);
+        if (self.playbackAdvancing) {
+            // The pending timer's wall-clock deadline was derived from the old
+            // rate even though its media boundary is unchanged.
+            [self cancelCueBoundaryTimer];
+            [self scheduleCueBoundaryFromPlaybackTime:
+                self.latestPlaybackTime];
         }
     });
 }
@@ -1370,9 +1416,9 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         self.playbackAnchorUptime <= 0) return time;
     NSTimeInterval uptime =
         NSProcessInfo.processInfo.systemUptime;
-    NSTimeInterval estimate =
-        self.playbackAnchorTime +
-        MAX(0, uptime - self.playbackAnchorUptime);
+    NSTimeInterval estimate = CIExtrapolatedPlaybackTime(
+        self.playbackAnchorTime, self.playbackAnchorUptime,
+        uptime, self.playbackRate);
     return isfinite(estimate) && estimate >= 0
         ? MAX(time, estimate) : time;
 }
@@ -1390,7 +1436,9 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
         [self cancelCueBoundaryTimer];
         return;
     }
-    NSTimeInterval delay = boundary - time;
+    // The boundary is in media time; the dispatch timer runs on wall time.
+    NSTimeInterval delay =
+        (boundary - time) / CISanitizedPlaybackRate(self.playbackRate);
     if (delay < 0.02) delay = 0.02;
     if (delay > 3600) {
         [self cancelCueBoundaryTimer];
@@ -1433,17 +1481,18 @@ static NSArray<CICaptionTrack *> *CIMergedCaptionTracks(
 
         NSTimeInterval uptime =
             NSProcessInfo.processInfo.systemUptime;
-        NSTimeInterval estimatedTime =
-            self.playbackAnchorTime +
-            MAX(0, uptime - self.playbackAnchorUptime);
+        NSTimeInterval estimatedTime = CIExtrapolatedPlaybackTime(
+            self.playbackAnchorTime, self.playbackAnchorUptime,
+            uptime, self.playbackRate);
         // Ensure floating-point rounding cannot leave the lookup on the old
         // cue when the one-shot fires exactly at the boundary.
         estimatedTime = MAX(estimatedTime, boundary + 0.015);
         self.latestPlaybackTime = estimatedTime;
         self.lastSubmittedTime = estimatedTime;
-        CIAODLog(@"event=cue_timer boundary_s=%.3f estimated_s=%.3f late_ms=%.0f anchor_age_ms=%.0f",
+        CIAODLog(@"event=cue_timer boundary_s=%.3f estimated_s=%.3f late_ms=%.0f anchor_age_ms=%.0f rate=%.2f",
             boundary, estimatedTime, MAX(0, estimatedTime - boundary) * 1000,
-            MAX(0, uptime - self.playbackAnchorUptime) * 1000);
+            MAX(0, uptime - self.playbackAnchorUptime) * 1000,
+            self.playbackRate);
         NSInteger previousIndex = self.displayedCueIndex;
         [self renderAtTime:estimatedTime];
         [self scheduleCueBoundaryFromPlaybackTime:estimatedTime];

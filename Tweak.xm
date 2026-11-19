@@ -1823,6 +1823,9 @@ static void CIStopPlayback(YTPlayerViewController *controller) {
         observePlaybackRate:rate
                playbackTime:playbackTime
             playerController:playerController];
+    // Queued ahead of the time update on the same serial queue, so the cue
+    // timer it reschedules already uses the new speed.
+    [CICaptionCoordinator.sharedCoordinator updatePlaybackRate:rate];
     [CICaptionCoordinator.sharedCoordinator
         updatePlaybackTime:playbackTime
                    playing:isfinite(rate) && rate > 0.001];
