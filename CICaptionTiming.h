@@ -50,4 +50,19 @@ FOUNDATION_EXPORT BOOL CIIsBackwardPlaybackJitter(
     NSTimeInterval tolerance
 );
 
+/// A raw clock that lands further than this from where continuous playback
+/// would have put it was moved by a seek (Lock Screen scrubber, skip buttons).
+FOUNDATION_EXPORT const NSTimeInterval CIPlaybackSeekThresholdSeconds;
+
+/// YES when the raw media clock moved since the previous sample, but not by
+/// roughly `elapsed × rate`: the player jumped rather than played. A clock that
+/// stood still is not a seek, so a frozen getter keeps its existing handling.
+FOUNDATION_EXPORT BOOL CIIsPlaybackSeek(
+    NSTimeInterval previousRawTime,
+    NSTimeInterval rawTime,
+    NSTimeInterval elapsed,
+    double rate,
+    NSTimeInterval threshold
+);
+
 NS_ASSUME_NONNULL_END

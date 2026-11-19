@@ -79,3 +79,21 @@ BOOL CIIsBackwardPlaybackJitter(
     NSTimeInterval lag = reference - sample;
     return lag > 0 && lag <= tolerance;
 }
+
+const NSTimeInterval CIPlaybackSeekThresholdSeconds = 1.0;
+
+BOOL CIIsPlaybackSeek(
+    NSTimeInterval previousRawTime,
+    NSTimeInterval rawTime,
+    NSTimeInterval elapsed,
+    double rate,
+    NSTimeInterval threshold
+) {
+    if (!isfinite(previousRawTime) || !isfinite(rawTime) ||
+        !isfinite(elapsed) || elapsed < 0 ||
+        !isfinite(threshold) || threshold <= 0) return NO;
+    if (fabs(rawTime - previousRawTime) < 0.04) return NO;
+    NSTimeInterval expected = previousRawTime +
+        elapsed * CISanitizedPlaybackRate(rate);
+    return fabs(rawTime - expected) > threshold;
+}

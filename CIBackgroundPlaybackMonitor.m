@@ -1,6 +1,7 @@
 #import "CIBackgroundPlaybackMonitor.h"
 #import "CIActivityPresenter.h"
 #import "CICaptionCoordinator.h"
+#import "CICaptionTiming.h"
 #import "CIConstants.h"
 #import "CILogStore.h"
 #import "CIPlaybackState.h"
@@ -53,6 +54,10 @@ static double CIQuantizedPlaybackRate(double rate) {
 @property (nonatomic) BOOL lastSuppressed;
 @property (nonatomic) BOOL hasPlaybackTime;
 @property (nonatomic) NSTimeInterval lastPlaybackTime;
+/// The previous tick's unmodified getter value. lastPlaybackTime may be an
+/// extrapolation, so only this one can tell a seek from a frozen clock.
+@property (nonatomic) BOOL hasRawPlaybackTime;
+@property (nonatomic) NSTimeInterval lastRawPlaybackTime;
 @property (nonatomic, copy) NSString *lastVideoID;
 @property (nonatomic, copy) NSString *durationPolicyVideoID;
 @property (nonatomic) BOOL didLogAvailability;
@@ -418,6 +423,8 @@ static double CIQuantizedPlaybackRate(double rate) {
 - (void)resetClockState {
     self.hasPlaybackTime = NO;
     self.lastPlaybackTime = 0;
+    self.hasRawPlaybackTime = NO;
+    self.lastRawPlaybackTime = 0;
     self.hasSuppressionState = NO;
     YTPlayerViewController *controller =
         self.backgroundControllerLease ?: self.playerController;
@@ -565,6 +572,8 @@ static double CIQuantizedPlaybackRate(double rate) {
     if (!timer) return;
     dispatch_source_cancel(timer);
     self.timer = nil;
+    // A later timer's first gap would span the idle period.
+    self.hasRawPlaybackTime = NO;
     CIAODLog(@"event=timer_stop cycle=%lu reason=%@", (unsigned long)self.diagnosticBackgroundCycle, reason ?: @"none");
     if (reason.length > 0) {
         [CILogStore.sharedStore recordLevel:CILogLevelInfo
@@ -683,6 +692,31 @@ static double CIQuantizedPlaybackRate(double rate) {
     double playbackRate = hasRecentObservedPlaybackRate
         ? self.observedPlaybackRate
         : (hasIndependentNowPlayingRate ? nowPlayingRate : 0);
+    // A Lock Screen scrub moves the raw clock somewhere continuous playback
+    // could not have reached. Comparing it with lastPlaybackTime instead made
+    // a backward seek look like a frozen getter: the clock kept extrapolating
+    // from the old position while YouTube's own time callbacks reported the
+    // new one, and the caption alternated between the two every tick.
+    BOOL seekDetected = self.hasRawPlaybackTime && callbackGap > 0 &&
+        CIIsPlaybackSeek(self.lastRawPlaybackTime, rawPlaybackTime,
+            callbackGap,
+            hasReliablePlaybackRate && playbackRate > 0 ? playbackRate : 1.0,
+            CIPlaybackSeekThresholdSeconds);
+    NSTimeInterval previousRawPlaybackTime = self.lastRawPlaybackTime;
+    self.hasRawPlaybackTime = YES;
+    self.lastRawPlaybackTime = rawPlaybackTime;
+    if (seekDetected) {
+        CIAODLog(@"event=seek_detected from_raw_s=%.3f to_raw_s=%.3f effective_s=%.3f tick_gap_ms=%.0f",
+            previousRawPlaybackTime, rawPlaybackTime, self.lastPlaybackTime,
+            callbackGap * 1000);
+        [CILogStore.sharedStore recordLevel:CILogLevelInfo
+            category:@"Background"
+            format:@"Background clock jumped from %.1fs to %.1fs; treating it as a seek and following the player.",
+                   previousRawPlaybackTime, rawPlaybackTime];
+        // Drop the previous baseline: no extrapolation, no rewind guard, and
+        // the raw value is published as a changed clock below.
+        self.hasPlaybackTime = NO;
+    }
     BOOL rawClockAdvanced = self.hasPlaybackTime &&
         rawPlaybackTime >
             self.lastPlaybackTime + CIBackgroundMinimumTimeChange;

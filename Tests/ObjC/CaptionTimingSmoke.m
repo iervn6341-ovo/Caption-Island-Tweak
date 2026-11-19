@@ -75,6 +75,24 @@ int main(void) {
         CIAssert(!CIIsBackwardPlaybackJitter(5.0, -DBL_MAX,
             CIPlaybackJitterToleranceSeconds),
             @"an unset reference must not suppress samples");
+        CIAssert(CIIsPlaybackSeek(100.0, 50.0, 0.75, 1.0,
+            CIPlaybackSeekThresholdSeconds),
+            @"scrubbing back fifty seconds is a seek");
+        CIAssert(CIIsPlaybackSeek(100.0, 160.0, 0.75, 1.0,
+            CIPlaybackSeekThresholdSeconds),
+            @"scrubbing forward is a seek");
+        CIAssert(!CIIsPlaybackSeek(100.0, 100.75, 0.75, 1.0,
+            CIPlaybackSeekThresholdSeconds),
+            @"ordinary playback is not a seek");
+        CIAssert(!CIIsPlaybackSeek(100.0, 101.5, 0.75, 2.0,
+            CIPlaybackSeekThresholdSeconds),
+            @"2x playback is not a seek");
+        CIAssert(!CIIsPlaybackSeek(100.0, 100.0, 3.0, 1.0,
+            CIPlaybackSeekThresholdSeconds),
+            @"a frozen raw clock is not a seek");
+        CIAssert(!CIIsPlaybackSeek(100.0, 100.3, 0.75, 1.0,
+            CIPlaybackSeekThresholdSeconds),
+            @"a late or lagging sample is not a seek");
         NSLog(@"Caption timing smoke passed");
     }
     return 0;
